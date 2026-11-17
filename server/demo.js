@@ -34,11 +34,12 @@ export function startDemo(brain) {
   const feed = (sess, rec, agentId = null) => {
     brain.processRecord({ ...rec, sessionId: sess.id, cwd: sess.p.cwd, ...(agentId ? { agentId } : {}) }, { projectKey: sess.p.key, sessionId: sess.id, agentId });
   };
+  let o = 0;
   const assistant = (sess, ts, model, content, agentId) => feed(sess, {
     type: 'assistant', timestamp: new Date(ts).toISOString(), effort: pick(['medium', 'high', 'xhigh']), thinkingDurationMs: R(400, 9000),
     message: {
       id: 'msg_' + randomUUID(), model, stop_reason: content.some((c) => c.type === 'tool_use') ? 'tool_use' : 'end_turn', content,
-      usage: { input_tokens: R(2, 40), cache_read_input_tokens: R(20000, 160000), cache_creation_input_tokens: R(200, 6000), output_tokens: R(80, 2600), output_tokens_details: { thinking_tokens: R(0, 1800) }, cache_creation: { ephemeral_5m_input_tokens: R(200, 6000), ephemeral_1h_input_tokens: 0 } },
+      usage: { input_tokens: R(2, 40), cache_read_input_tokens: R(20000, 160000), cache_creation_input_tokens: R(200, 6000), output_tokens: (o = R(80, 2600)), output_tokens_details: { thinking_tokens: R(0, Math.floor(o * 0.7)) }, cache_creation: { ephemeral_5m_input_tokens: R(200, 6000), ephemeral_1h_input_tokens: 0 } },
     },
   }, agentId);
   const result = (sess, ts, id, agentId) => feed(sess, { type: 'user', timestamp: new Date(ts).toISOString(), message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: Math.random() < 0.05 }] } }, agentId);

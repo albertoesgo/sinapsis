@@ -10,8 +10,9 @@ import { Hud } from './hud.js';
 
 // ---------- escena ----------
 const canvas = document.getElementById('scene');
+const MOBILE = matchMedia('(max-width: 760px)').matches || matchMedia('(pointer: coarse)').matches;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+renderer.setPixelRatio(Math.min(MOBILE ? 1.5 : 2, window.devicePixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setClearColor(0x030409, 1);
 
@@ -19,6 +20,13 @@ const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x030409, 0.012);
 const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 400);
 camera.position.set(-17.5, 6.5, 15.5);
+// en vertical el cerebro necesita más distancia para caber
+function fitCamera() {
+  const a = window.innerWidth / window.innerHeight;
+  const k = a < 1 ? 1 + (1 - a) * 1.0 : 1;
+  camera.position.setLength(24.5 * k);
+}
+fitCamera();
 
 const controls = new OrbitControls(camera, canvas);
 controls.target.set(0, -0.9, -0.8);
@@ -53,7 +61,7 @@ composer.addPass(new OutputPass());
 }
 
 const brainMat = brainMaterial();
-const brainCloud = new THREE.Points(buildBrainCloud(), brainMat);
+const brainCloud = new THREE.Points(buildBrainCloud(MOBILE ? 0.55 : 1), brainMat);
 scene.add(brainCloud);
 
 const somaMat = somaMaterial();
@@ -247,7 +255,7 @@ function focusNode(id) {
   const to = n.pos.clone();
   const camFrom = camera.position.clone();
   const dir = camFrom.clone().sub(from).normalize();
-  const camTo = to.clone().addScaledVector(dir, 13);
+  const camTo = to.clone().addScaledVector(dir, MOBILE ? 18 : 13);
   focusAnim = { t: 0, from, to, camFrom, camTo };
   excite(id, 1.2);
   hud.showDetail(n, state.snap);
@@ -260,15 +268,16 @@ canvas.addEventListener('pointerleave', () => mouse.set(-9, -9));
 let downAt = null;
 canvas.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
 canvas.addEventListener('pointerup', (e) => {
-  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > (e.pointerType === 'touch' ? 12 : 5)) return;
+  if (e.pointerType !== 'mouse') { mouse.set(e.clientX, e.clientY); pick(36); mouse.set(-9, -9); hud.hover(null); }
   if (hovered) focusNode(hovered.id);
   else hud.hideDetail();
 });
 
 const v = new THREE.Vector3();
-function pick() {
+function pick(radius = 22) {
   if (mouse.x < 0) { hovered = null; hud.hover(null); return; }
-  let best = null, bd = 22;
+  let best = null, bd = radius;
   for (const n of state.nodes.values()) {
     v.copy(n.pos).project(camera);
     if (v.z > 1) continue;
@@ -328,7 +337,7 @@ function frame() {
       ag.needsUpdate = true;
     }
   }
-  pick();
+  if (!MOBILE) pick();
   hud.frame(camera, state.nodes, t);
   composer.render();
   requestAnimationFrame(frame);
@@ -337,6 +346,7 @@ function frame() {
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+  if (!focusAnim) fitCamera();
   renderer.setSize(window.innerWidth, window.innerHeight);
   composer.setSize(window.innerWidth, window.innerHeight);
 });

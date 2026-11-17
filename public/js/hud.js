@@ -76,9 +76,42 @@ export class Hud {
     $('#inv-toggle').onclick = (e) => { const o = $('#inventory').classList.toggle('open'); e.currentTarget.classList.toggle('on', o); };
     document.querySelectorAll('.panel .collapse').forEach((b) => { b.onclick = () => b.closest('.panel').classList.toggle('min'); });
     this.invTab = 'skills';
+    // barra inferior (móvil)
+    document.body.dataset.tab = 'brain';
+    document.querySelectorAll('#tabbar button').forEach((b) => {
+      b.onclick = () => this.setTab(b.dataset.tab === document.body.dataset.tab ? 'brain' : b.dataset.tab);
+    });
+    // QR para abrirlo en el móvil (solo disponible desde el propio ordenador)
+    fetch('/api/mobile').then((r) => (r.ok ? r.json() : null)).then((m) => {
+      if (!m || m.remote) { $('#btn-mobile').remove(); return; }
+      this.mobileInfo = m;
+    }).catch(() => $('#btn-mobile')?.remove());
+    $('#btn-mobile').onclick = () => {
+      const m = this.mobileInfo;
+      if (!m) return;
+      const box = $('#mobile');
+      if (m.lan) {
+        box.querySelector('.qr').innerHTML = m.qr;
+        box.querySelector('.urls').innerHTML = m.urls.map((u) => esc(u.replace(/\?k=.*/, ''))).join('<br>');
+      } else {
+        box.querySelector('.qr').innerHTML = '';
+        box.querySelector('.how').innerHTML = 'El acceso desde la red está desactivado. Arranca Sinapsis con <code>npm start -- --lan</code> o instala el servicio con <code>npm run service:install</code>.';
+        box.querySelector('.tip').textContent = '';
+      }
+      box.classList.add('open');
+    };
+    $('#mobile').onclick = (e) => { if (e.target.id === 'mobile' || e.target.closest('.close')) $('#mobile').classList.remove('open'); };
     this.eegCanvas = $('#eeg canvas');
     this.ctx = this.eegCanvas.getContext('2d');
     $('#eeg .legend').innerHTML = CH.map((c) => `<span><i style="background:${c.color}"></i>${c.label}</span>`).join('');
+  }
+
+  setTab(tab) {
+    document.body.dataset.tab = tab;
+    document.querySelectorAll('#tabbar button').forEach((x) => x.classList.toggle('on', x.dataset.tab === tab));
+    if (tab !== 'brain') this.hideDetail();
+    if (tab === 'inv') this.renderInventory();
+    if (tab === 'metab' && this.snap) this.renderMetabolism(this.snap);
   }
 
   setConnection(ok) {
@@ -447,6 +480,7 @@ export class Hud {
     el.querySelector('.content').innerHTML = this.describe(n, false) + extra;
     el.querySelectorAll('.click li').forEach((li) => { li.onclick = () => this.cb.onFocus(li.dataset.id); });
     el.classList.add('open');
+    if (matchMedia('(max-width: 760px)').matches && document.body.dataset.tab !== 'brain') this.setTab('brain');
   }
 
   hideDetail() { $('#detail').classList.remove('open'); }

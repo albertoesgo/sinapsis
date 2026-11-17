@@ -1,10 +1,13 @@
 #!/usr/bin/env node
-// Sinapsis · servidor local. Solo escucha en 127.0.0.1: tus datos nunca salen del ordenador.
+// Sinapsis · servidor local. Por defecto solo escucha en 127.0.0.1: tus datos nunca salen del ordenador.
+// Con --lan también responde en tu red local (para verlo en el móvil), protegido con una clave secreta.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
+import QRCode from 'qrcode';
 import { Brain } from './ingest.js';
 import { startDemo } from './demo.js';
 
@@ -18,9 +21,39 @@ const flag = (name, def) => {
 };
 const DEMO = !!flag('demo', false);
 const PORT = Number(flag('port', process.env.SINAPSIS_PORT || 7420));
-const HOST = flag('host', '127.0.0.1');
+const LAN = !!flag('lan', process.env.SINAPSIS_LAN === '1');
+const HOST = flag('host', LAN ? '0.0.0.0' : '127.0.0.1');
 const CLAUDE_DIR = flag('claude-dir', process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'));
 const CACHE = path.join(os.homedir(), '.sinapsis', 'state.json');
+
+// ---------- acceso desde otros dispositivos ----------
+const TOKEN_FILE = path.join(os.homedir(), '.sinapsis', 'token');
+function loadToken() {
+  try { const t = fs.readFileSync(TOKEN_FILE, 'utf8').trim(); if (t.length >= 20) return t; } catch { /* se crea */ }
+  const t = crypto.randomBytes(18).toString('base64url');
+  fs.mkdirSync(path.dirname(TOKEN_FILE), { recursive: true });
+  fs.writeFileSync(TOKEN_FILE, t, { mode: 0o600 });
+  return t;
+}
+const TOKEN = loadToken();
+const isLoopback = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
+function cookieToken(req) {
+  const m = (req.headers.cookie || '').match(/(?:^|;\s*)sinapsis_k=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+function lanUrls() {
+  const ips = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const a of list || []) if (a.family === 'IPv4' && !a.internal) ips.push(a.address);
+  }
+  ips.sort((a, b) => (/^192\.168\./.test(b) - /^192\.168\./.test(a)));
+  const host = os.hostname().replace(/\.local$/, '') + '.local';
+  return [...ips.map((ip) => `http://${ip}:${PORT}/?k=${TOKEN}`), `http://${host}:${PORT}/?k=${TOKEN}`];
+}
+const DENIED = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sinapsis</title>
+<body style="background:#030409;color:#ebe7df;font:15px/1.5 -apple-system,sans-serif;display:grid;place-items:center;height:100vh;margin:0;text-align:center;padding:24px">
+<div><h1 style="font:400 30px Georgia,serif">Sinapsis</h1><p style="color:#8a8f9d">Para entrar desde este dispositivo, abre Sinapsis en tu ordenador,<br>pulsa <b>Móvil</b> y escanea el código QR.</p></div>`;
 
 const clients = new Set();
 const send = (res, type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -77,6 +110,34 @@ function serveFile(res, base, rel) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = decodeURIComponent(url.pathname);
+  if (!isLoopback(req)) {
+    const k = url.searchParams.get('k');
+    if (k && same(k, TOKEN)) {
+      res.setHeader('Set-Cookie', `sinapsis_k=${encodeURIComponent(TOKEN)}; Max-Age=31536000; Path=/; HttpOnly; SameSite=Lax`);
+    } else if (!same(cookieToken(req), TOKEN)) {
+      res.writeHead(401, { 'Content-Type': 'text/html; charset=utf-8' }).end(DENIED);
+      return;
+    }
+  }
+  if (p === '/manifest.webmanifest') {
+    res.writeHead(200, { 'Content-Type': 'application/manifest+json' });
+    res.end(JSON.stringify({
+      name: 'Sinapsis', short_name: 'Sinapsis', description: 'El sistema nervioso de Claude Code',
+      start_url: isLoopback(req) ? '/' : '/?k=' + TOKEN, display: 'standalone', orientation: 'any',
+      background_color: '#030409', theme_color: '#030409',
+      icons: [{ src: '/icon-512.png', sizes: '512x512', type: 'image/png' }, { src: '/icon-180.png', sizes: '180x180', type: 'image/png' }],
+    }));
+    return;
+  }
+  if (p === '/api/mobile') {
+    if (!isLoopback(req)) { res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"remote":true}'); return; }
+    const urls = lanUrls();
+    QRCode.toString(urls[0], { type: 'svg', margin: 1, color: { dark: '#030409', light: '#ebe7df' } }).then((qr) => {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ lan: LAN, urls, qr }));
+    });
+    return;
+  }
   if (p === '/api/snapshot') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ ...brain.snapshot(), demo: DEMO }));
@@ -95,4 +156,7 @@ const server = http.createServer((req, res) => {
 });
 
 boot();
-server.listen(PORT, HOST, () => console.log(`· Sinapsis en http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`));
+server.listen(PORT, HOST, () => {
+  console.log(`· Sinapsis en http://localhost:${PORT}`);
+  if (LAN) console.log(`· También en tu red (${lanUrls()[0].replace(/\?k=.*/, '')}). Para el móvil, abre Sinapsis en el ordenador y pulsa «Móvil».`);
+});

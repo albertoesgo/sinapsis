@@ -31,7 +31,7 @@ Y en los paneles:
 
 ## Qué es real y qué no
 
-Todos los datos salen de los registros que Claude Code ya guarda en `~/.claude/projects/**/*.jsonl` (uso de tokens de cada respuesta, llamadas a herramientas, subagentes, títulos de sesión…) y de lo que tienes instalado en `~/.claude/skills`, los plugins y las carpetas de memoria. **Nada sale de tu ordenador**: el servidor solo escucha en `127.0.0.1` y no hace peticiones a internet.
+Todos los datos salen de los registros que Claude Code ya guarda en `~/.claude/projects/**/*.jsonl` (uso de tokens de cada respuesta, llamadas a herramientas, subagentes, títulos de sesión…) y de lo que tienes instalado en `~/.claude/skills`, los plugins y las carpetas de memoria. **Nada sale de tu ordenador**: por defecto el servidor solo escucha en `127.0.0.1`, nunca hace peticiones a internet y, si activas el acceso desde el móvil, solo responde en tu red local y con clave.
 
 - Las neuronas y sus conexiones existen solo si el evento ocurrió de verdad. Su tamaño y su brillo dependen del uso real.
 - Las chispas doradas que salen de un modelo al pensar representan sus *tokens de razonamiento* reales (una chispa por cada ~120).
@@ -60,6 +60,16 @@ npm run demo         # actividad sintética
 
 Opciones: `--port 7420`, `--claude-dir /ruta/a/.claude` (también respeta `CLAUDE_CONFIG_DIR`) y `--demo`.
 
+### En el móvil
+
+```bash
+npm start -- --lan
+```
+
+Con `--lan`, Sinapsis también responde en tu wifi, protegido con una clave secreta que se genera sola (`~/.sinapsis/token`). En el ordenador, pulsa **Móvil** y escanea el código QR con el móvil, que tiene que estar en la misma red. En Safari, *Compartir → Añadir a pantalla de inicio* lo deja como una app. Sin la clave, el servidor devuelve un 401 y no muestra nada.
+
+Si macOS pregunta si `node` puede aceptar conexiones entrantes, pulsa **Permitir**.
+
 ### Siempre encendido (macOS)
 
 ```bash
@@ -67,7 +77,7 @@ npm run service:install     # arranca al iniciar sesión y se reinicia si se cae
 npm run service:uninstall
 ```
 
-Crea un LaunchAgent (`~/Library/LaunchAgents/com.sinapsis.server.plist`) y guarda el registro en `~/.sinapsis/sinapsis.log`.
+Crea un LaunchAgent (`~/Library/LaunchAgents/com.sinapsis.server.plist`) con el acceso por wifi activado (`SINAPSIS_LAN=0 npm run service:install` para dejarlo solo en local) y guarda el registro en `~/.sinapsis/sinapsis.log`.
 
 ## Cómo está hecho
 
@@ -77,7 +87,7 @@ Crea un LaunchAgent (`~/Library/LaunchAgents/com.sinapsis.server.plist`) y guard
 - `public/js/neurons.js` coloca cada nodo real en su región anatómica, con somas, dendritas, axones curvos y la animación de los impulsos.
 - `public/js/hud.js` se encarga de los paneles, el EEG, la anatomía del pensamiento y el inventario.
 
-Solo depende de [three.js](https://threejs.org).
+Depende de [three.js](https://threejs.org) y de [qrcode](https://github.com/soldair/node-qrcode).
 
 ## Licencia
 

@@ -98,7 +98,7 @@ function randomDir(r) {
   return new THREE.Vector3(s * Math.cos(t), z, s * Math.sin(t));
 }
 
-export function buildBrainCloud() {
+export function buildBrainCloud(scale = 1) {
   const r = rng(42);
   const pos = [], col = [], size = [], seed = [];
   const push = (p, c, s) => { pos.push(p.x, p.y, p.z); col.push(c[0], c[1], c[2]); size.push(s); seed.push(r()); };
@@ -108,7 +108,7 @@ export function buildBrainCloud() {
   for (const h of [-1, 1]) {
     const c = hemiCenter(h);
     let n = 0;
-    while (n < 46000) {
+    while (n < 46000 * scale) {
       const d = randomDir(r);
       const p = cortexBase(h, d, tmp).clone();
       const nrm = p.clone().sub(c).normalize();
@@ -137,7 +137,7 @@ export function buildBrainCloud() {
   // Cerebelo: láminas finas (folias)
   for (const h of [-1, 1]) {
     let n = 0;
-    while (n < 8000) {
+    while (n < 8000 * scale) {
       const d = randomDir(r);
       if (d.z > 0.35 && d.y > 0.1) continue;
       const p = cerebAt(h, d, 0);
@@ -149,7 +149,7 @@ export function buildBrainCloud() {
     }
   }
   // Tronco encefálico (con la protuberancia)
-  for (let i = 0; i < 6000; i++) {
+  for (let i = 0; i < 6000 * scale; i++) {
     const t = r();
     const axis = STEM.top.clone().lerp(STEM.bottom, t);
     const rad = 1.05 - 0.4 * t + 0.4 * Math.exp(-((t - 0.28) ** 2) / 0.01);
@@ -159,7 +159,7 @@ export function buildBrainCloud() {
     push(p, [0.4 * b, 0.5 * b, 0.8 * b], 0.8 + r() * 0.5);
   }
   // Polvo interior (sustancia blanca)
-  for (let i = 0; i < 9000; i++) {
+  for (let i = 0; i < 9000 * scale; i++) {
     const h = r() < 0.5 ? -1 : 1;
     const d = randomDir(r);
     const p = cortexBase(h, d, tmp).clone();

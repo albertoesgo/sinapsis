@@ -216,3 +216,68 @@ b { font-weight: 600; }
   #right { width: 320px; }
   #inventory { left: 294px; }
 }
+
+/* ---------- móvil: QR ---------- */
+#tabbar { display: none; }
+#mobile { position: fixed; inset: 0; background: rgba(2, 3, 7, 0.7); backdrop-filter: blur(6px); display: none; align-items: center; justify-content: center; z-index: 20; }
+#mobile.open { display: flex; }
+#mobile article { position: relative; width: min(420px, 92vw); background: #090b13; border: 1px solid var(--line); border-radius: 16px; padding: 30px 32px; text-align: center; }
+#mobile h2 { font: 400 24px var(--serif); letter-spacing: 0; text-transform: none; color: var(--ink); }
+#mobile .qr { width: 220px; height: 220px; margin: 6px auto 14px; padding: 10px; border-radius: 14px; background: #ebe7df; }
+#mobile .qr svg { width: 100%; height: 100%; display: block; }
+#mobile p { color: #c9c5bd; font-size: 12.5px; margin: 8px 0; }
+#mobile .tip { color: var(--muted); }
+#mobile .urls { font: 11px var(--mono); color: var(--memory); word-break: break-all; }
+#mobile .sec { color: var(--faint); font-size: 11px; }
+#mobile .close { position: absolute; top: 12px; right: 16px; font-size: 22px; color: var(--muted); }
+
+/* ---------- móvil: diseño táctil ---------- */
+@media (max-width: 760px) {
+  #brand { top: calc(env(safe-area-inset-top) + 12px); left: 16px; }
+  #brand h1 { font-size: 24px; }
+  #brand p:not(.status) { display: none; }
+  #brand .status { font-size: 11px; margin-top: 4px; }
+  #controls { top: calc(env(safe-area-inset-top) + 12px); right: 12px; gap: 5px; }
+  #controls button { width: 34px; height: 34px; padding: 0; justify-content: center; border-radius: 17px; }
+  #controls button span, #controls #inv-toggle, #controls #btn-mobile, #controls #btn-labels { display: none; }
+  #btn-info::before { content: '?'; font: 500 14px var(--sans); }
+  #replay { top: calc(env(safe-area-inset-top) + 92px); }
+  .panel .collapse { display: none; }
+
+  #left, #right, #inventory {
+    display: none; position: fixed; left: 0; right: 0; top: auto; width: auto;
+    bottom: calc(60px + env(safe-area-inset-bottom)); height: 58vh; max-height: none;
+    border-radius: 20px 20px 0 0; border-bottom: 0; padding: 20px 18px 28px; overflow-y: auto;
+    background: rgba(8, 10, 17, 0.88); -webkit-overflow-scrolling: touch; z-index: 8;
+  }
+  #left::before, #right::before, #inventory::before, #detail::before { content: ''; position: absolute; top: 7px; left: 50%; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: rgba(255, 255, 255, 0.15); }
+  body[data-tab='metab'] #left { display: block; }
+  body[data-tab='thought'] #right, body[data-tab='feed'] #right { display: flex; }
+  body[data-tab='thought'] #impulses, body[data-tab='feed'] #thought { display: none; }
+  body[data-tab='inv'] #inventory { display: flex; }
+  #feed { -webkit-mask-image: none; mask-image: none; overflow-y: auto; }
+  #inv-list li span { font-size: 10.5px; }
+
+  #eeg { left: 12px; right: 12px; bottom: calc(68px + env(safe-area-inset-bottom)); height: 54px; grid-template-columns: 96px 1fr; }
+  #eeg canvas { height: 50px; }
+  #eeg .legend span { font-size: 9px; }
+  #eeg .span { display: none; }
+  body:not([data-tab='brain']) #eeg { display: none; }
+
+  #tabbar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); background: rgba(5, 6, 11, 0.92); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border-top: 1px solid var(--line); z-index: 10; }
+  #tabbar button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; color: var(--faint); font-size: 10px; padding: 4px 0; -webkit-tap-highlight-color: transparent; }
+  #tabbar button.on { color: var(--ink); }
+  #tabbar svg { width: 20px; height: 20px; fill: currentColor; }
+
+  #detail { top: auto; left: 0; right: 0; width: auto; bottom: calc(60px + env(safe-area-inset-bottom)); max-height: 64vh; border-radius: 20px 20px 0 0; padding-top: 22px; transform: translateY(115%); z-index: 9; background: rgba(8, 10, 17, 0.92); }
+  #detail.open { transform: none; }
+  #tip { display: none; }
+  .lbl.region { display: none; }
+  .lbl.project span { font-size: 12px; }
+  .lbl.model span { font-size: 8.5px; }
+  #thought .thead { flex-wrap: wrap; white-space: normal; }
+  #thought .thead .r { margin-left: 0; width: 100%; }
+  #info article { padding: 28px 22px; }
+  #info dl { grid-template-columns: 1fr; gap: 2px; }
+  #info dt { margin-top: 12px; }
+}
