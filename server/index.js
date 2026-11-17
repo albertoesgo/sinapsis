@@ -12,6 +12,7 @@ import { Brain } from './ingest.js';
 import { startDemo } from './demo.js';
 import { weeklyReport } from './report.js';
 import { loadConfig, notify } from './notify.js';
+import { planStatus } from './plan.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -114,6 +115,23 @@ function boot() {
     raise({ kind: 'weekly', ts: Date.now(), title: 'Tu semana con Claude Code', body: `${r.cur.prompts} peticiones · ≈${r.cur.perPrompt.toFixed(2)} US$ por petición${trend}. ${r.tips[0].title}: ${r.tips[0].text}` });
   }, 60000);
   setInterval(() => { try { brain.save(); } catch (e) { console.error('save', e.message); } }, 30000);
+  // Avisos del plan: al pasar del 75 % y del 90 % del presupuesto estimado de la ventana de 5 h o de la semana
+  setInterval(() => {
+    const pl = planStatus(brain.s);
+    const hhmm = (t) => new Date(t).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+    const check = (w, key, name) => {
+      if (!w.pct || !w.start) return;
+      const lvl = w.pct >= 0.9 ? 90 : w.pct >= 0.75 ? 75 : 0;
+      const id = `${key}:${w.start}`;
+      brain.s.planAlerted ||= {};
+      if (!lvl || (brain.s.planAlerted[id] || 0) >= lvl) return;
+      brain.s.planAlerted[id] = lvl; brain.dirty = true;
+      const when = w.end ? ` Se reinicia ${key === 'week' ? new Date(w.end).toLocaleDateString('es-ES', { weekday: 'long' }) + ' a las ' : 'a las '}${hhmm(w.end)}.` : '';
+      raise({ kind: 'plan', ts: Date.now(), level: lvl, title: `Llevas ≈${Math.round(w.pct * 100)} % de ${name}`, body: `Estimación según tus cortes anteriores.${when}${w.eta ? ` Al ritmo actual llegarías al límite hacia las ${hhmm(w.eta)}.` : ''}` });
+    };
+    check(pl.h5, 'h5', 'tu ventana de 5 horas');
+    check(pl.week, 'week', 'tu límite semanal');
+  }, 30000);
   const bye = () => { try { brain.save(); } catch { /* nada */ } process.exit(0); };
   process.on('SIGINT', bye);
   process.on('SIGTERM', bye);

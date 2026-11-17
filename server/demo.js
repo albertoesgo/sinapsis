@@ -1,6 +1,7 @@
 // Modo demostración: genera actividad sintética con el mismo formato que Claude Code.
 // Sirve para probar Sinapsis sin datos propios (y para las capturas del README).
 import { randomUUID } from 'node:crypto';
+import { planStatus } from './plan.js';
 
 const PROJECTS = [
   { key: 'demo-atlas', cwd: '/demo/atlas-web' },
@@ -99,6 +100,21 @@ export function startDemo(brain) {
     turn(pick(all), ts);
   }
   brain.s.recent.sort((a, b) => a.ts - b.ts);
+  // Cortes del plan como los que escribe Claude Code («You've hit your 5-hour limit · resets 10:50pm»)
+  const clock = (d) => `${d.getHours() % 12 || 12}${d.getMinutes() ? ':' + String(d.getMinutes()).padStart(2, '0') : ''}${d.getHours() >= 12 ? 'pm' : 'am'}`;
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const hit = (ago, h, m, resetH, text) => {
+    const t = new Date(now - ago * 86400e3); t.setHours(h, m, 0, 0);
+    const r = new Date(t); r.setHours(resetH, 50, 0, 0);
+    brain.onSynthetic({ message: { content: [{ type: 'text', text: text(r) }] } }, t.getTime());
+  };
+  hit(3, 20, 17, 22, (r) => `You've hit your 5-hour limit · resets ${clock(r)} (Europe/Madrid)`);
+  hit(6, 13, 5, 15, (r) => `You've hit your 5-hour limit · resets ${clock(r)} (Europe/Madrid)`);
+  hit(9, 18, 40, 0, () => { const r = new Date(now - 7 * 86400e3); r.setHours(1, 0, 0, 0); return `You've hit your weekly limit · resets ${MON[r.getMonth()]} ${r.getDate()} at 1am (Europe/Madrid)`; });
+  // presupuestos coherentes con la actividad sintética
+  const pl = planStatus(brain.s, now);
+  const top = Math.max(...pl.windows.map((w) => w.used));
+  for (const h of Object.values(brain.s.limits)) h.used = h.kind === '5h' ? top * (h.ts % 2 ? 1.6 : 1.8) : pl.week.used * 1.9;
   for (const s of all) brain.s.shapes[s.id] = { ts: now, systemChars: 31000, systemBlocks: 3, toolsChars: 98000, nTools: 26, topTools: [['Artifact', 56000], ['Bash', 9800], ['Agent', 7600], ['Edit', 4200]] };
   brain.inventory = {
     skills: Object.fromEntries([...SKILLS, 'xlsx', 'pptx', 'skill-creator', 'deep-research'].map((n) => [n, { name: n, source: 'demo', description: 'Skill de demostración' }])),

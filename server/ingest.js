@@ -5,8 +5,11 @@ import path from 'node:path';
 import os from 'node:os';
 import { costOf, prettyModel } from './pricing.js';
 import { scanInventory } from './inventory.js';
+import { planStatus } from './plan.js';
 
-const CACHE_VERSION = 7;
+const CACHE_VERSION = 8;
+const SLOT_MS = 10 * 60e3; // consumo en franjas de 10 min, para las ventanas del plan
+const SLOT_KEEP_MS = 45 * 86400e3;
 
 // ---------- perfil de actividad: a qué se dedica de verdad cada proyecto ----------
 // Cada acción real se clasifica en una de cuatro funciones; el cerebro coloca el proyecto
@@ -43,6 +46,26 @@ const inc = (obj, k, n = 1) => { obj[k] = (obj[k] || 0) + n; };
 const day = (ts) => new Date(ts).toLocaleDateString('sv-SE'); // AAAA-MM-DD en hora local
 const clip = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s || '');
 
+const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+/** «10:50pm», «3am», «Nov 13 at 1am» → marca de tiempo (hora local del ordenador). */
+export function parseReset(txt, ts) {
+  const t = String(txt).trim().match(/(?:([A-Za-z]{3})[a-z]*\s+(\d{1,2})(?:,?\s*(\d{4}))?\s*(?:at\s+)?)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+  if (!t) return null;
+  let h = +t[4] % 12; if (t[6].toLowerCase() === 'pm') h += 12;
+  const d = new Date(ts);
+  if (t[1]) {
+    const mo = MONTHS[t[1].toLowerCase()];
+    if (mo == null) return null;
+    d.setMonth(mo, +t[2]);
+    if (t[3]) d.setFullYear(+t[3]);
+  }
+  d.setHours(h, +(t[5] || 0), 0, 0);
+  if (d.getTime() <= ts) {
+    if (t[1]) { if (!t[3]) d.setFullYear(d.getFullYear() + 1); } else d.setDate(d.getDate() + 1);
+  }
+  return d.getTime();
+}
+
 export function mcpName(server) {
   return server.replace(/^claude_ai_/, '').replace(/^plugin_[^_]+_/, '').replace(/_/g, ' ');
 }
@@ -67,6 +90,8 @@ function emptyState() {
     lastThought: null,
     seenMsg: [],
     agentMeta: {},
+    slots: {},
+    limits: {},
   };
 }
 
@@ -108,6 +133,8 @@ export class Brain {
     this.s.seenMsg = arr.slice(-20000);
     if (this.seen.size > 30000) this.seen = new Set(this.s.seenMsg);
     this.s.recent = this.s.recent.filter((e) => e.ts > Date.now() - RECENT_MS).slice(-RECENT_MAX);
+    const minSlot = Math.floor((Date.now() - SLOT_KEEP_MS) / SLOT_MS);
+    for (const k of Object.keys(this.s.slots)) if (+k < minSlot) delete this.s.slots[k];
     fs.mkdirSync(path.dirname(this.cacheFile), { recursive: true });
     const tmp = this.cacheFile + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(this.s));
@@ -316,7 +343,8 @@ export class Brain {
 
   onAssistant(d, p, s, fromNode, base, agentType) {
     const m = d.message;
-    if (!m || !m.model || m.model === '<synthetic>') return;
+    if (m?.model === '<synthetic>') { this.onSynthetic(d, base.ts); return; }
+    if (!m || !m.model) return;
     const model = m.model;
     const ts = base.ts;
     const modelNode = 'model:' + model;
@@ -344,6 +372,8 @@ export class Brain {
         addTok(at.tok, tok); at.cost += cost; at.msgs++; this.touch(at, ts);
       }
       if (ts) {
+        const sk = Math.floor(ts / SLOT_MS);
+        this.s.slots[sk] = (this.s.slots[sk] || 0) + cost;
         const dd = this.dayEntry(ts);
         addTok(dd.tok, tok); dd.cost += cost; dd.msgs++;
         inc(dd.byProject, p.key, cost); inc(dd.byModel, model, cost);
@@ -368,6 +398,21 @@ export class Brain {
       if (this.pendingTools.has(b.id)) continue;
       this.onToolUse(b, p, s, model, modelNode, base, agentType);
     }
+  }
+
+  /** Mensajes que escribe el propio Claude Code, p. ej. «You've hit your 5-hour limit · resets 10:50pm». */
+  onSynthetic(d, ts) {
+    const text = (d.message?.content || []).map((b) => b?.text || '').join(' ');
+    const m = text.match(/hit your (.+?) limit\s*[·•-]\s*resets\s+(.+?)\s*(?:\(([^)]+)\))?\s*$/i);
+    if (!m || !ts) return;
+    const kind = /5-hour/i.test(m[1]) ? '5h' : /weekly/i.test(m[1]) ? (/opus|sonnet|fable/i.test(m[1]) ? 'model-week' : 'week') : 'other';
+    const resetTs = parseReset(m[2], ts);
+    const key = `${kind}|${resetTs || m[2]}`;
+    this.s.limits ||= {};
+    const prev = this.s.limits[key];
+    if (prev && prev.ts <= ts) return;
+    this.s.limits[key] = { kind, label: m[1], ts, resetTs, resetText: m[2] };
+    this.dirty = true;
   }
 
   dayEntry(ts) {
@@ -576,6 +621,7 @@ export class Brain {
       lastShape: Object.values(s.shapes).sort((a, b) => b.ts - a.ts)[0] || null,
       recent: s.recent.filter((e) => e.ts > now - RECENT_MS).slice(-6000),
       liveSessions: [...this.liveSessions],
+      plan: planStatus(s, now),
     };
   }
 }
