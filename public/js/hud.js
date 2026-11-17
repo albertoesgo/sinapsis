@@ -58,6 +58,41 @@ async function copy(text) {
   return ok;
 }
 
+/** Hojas del móvil: arrastrar hacia abajo desde arriba (o con el contenido ya arriba del todo) cierra. */
+function swipeToClose(el, onClose, scroller = el) {
+  if (!el) return;
+  let y0 = null, dy = 0, active = false;
+  el.addEventListener('touchstart', (e) => {
+    if (!matchMedia('(max-width: 760px)').matches || e.touches.length !== 1) return;
+    const nearTop = e.touches[0].clientY - el.getBoundingClientRect().top < 56;
+    if (!nearTop && scroller.scrollTop > 0) return;
+    if (e.target.closest('input, canvas, #feed')) { if (!nearTop) return; }
+    y0 = e.touches[0].clientY; dy = 0; active = false;
+  }, { passive: true });
+  el.addEventListener('touchmove', (e) => {
+    if (y0 == null) return;
+    dy = e.touches[0].clientY - y0;
+    if (!active && dy > 8) active = true;
+    if (!active) { if (dy < -4) y0 = null; return; }
+    e.preventDefault();
+    el.style.transition = 'none';
+    el.style.transform = `translateY(${Math.max(0, dy)}px)`;
+  }, { passive: false });
+  el.addEventListener('touchend', () => {
+    if (y0 == null) return;
+    y0 = null;
+    if (!active) return;
+    el.style.transition = 'transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1)';
+    if (dy > 90) {
+      el.style.transform = 'translateY(100%)';
+      setTimeout(() => { onClose(); el.style.transform = ''; el.style.transition = ''; }, 200);
+    } else {
+      el.style.transform = '';
+      setTimeout(() => { el.style.transition = ''; }, 260);
+    }
+  });
+}
+
 const CTX = { warn: 100000, high: 200000, max: 600000 };
 const ctxLevel = (c) => (c >= CTX.high ? 'high' : c >= CTX.warn ? 'warn' : 'ok');
 const LIVE_MS = 30 * 60e3;
@@ -145,7 +180,7 @@ export class Hud {
 
     // QR para el móvil (solo desde el propio ordenador)
     fetch('/api/mobile').then((r) => (r.ok ? r.json() : null)).then((m) => {
-      if (!m || m.remote) { $('#btn-mobile').remove(); return; }
+      if (!m || m.remote) { this.remote = !!m?.remote; $('#btn-mobile').remove(); return; }
       this.mobileInfo = m;
     }).catch(() => $('#btn-mobile')?.remove());
     $('#btn-mobile').onclick = () => this.openMobile();
@@ -181,6 +216,14 @@ export class Hud {
       this.coachDone = done;
       setTimeout(done, 20000);
     }
+
+    // móvil: deslizar hacia abajo cierra hojas y diálogos
+    const toBrain = () => this.setTab('brain');
+    swipeToClose($('#left'), toBrain);
+    swipeToClose($('#right'), toBrain);
+    swipeToClose($('#inventory'), toBrain);
+    swipeToClose($('#detail'), () => { this.hideDetail(); this.cb.onHome?.(); });
+    $$('[data-modal]').forEach((m) => { if (m.id !== 'palette') swipeToClose($('article', m), () => this.closeModal(m.id), $('.mbody', m)); });
 
     // el plan y las cuentas atrás se refrescan solos
     setInterval(() => { if (this.snap) { this.renderPlan(); this.renderNow(); } }, 30000);
@@ -250,8 +293,16 @@ export class Hud {
     this.openModal('mobile');
   }
 
+  /** En el móvil: marca si hay una hoja abierta (para subir el cerebro) y avisa al 3D. */
+  syncSheet() {
+    const open = document.body.dataset.tab !== 'brain' || $('#detail').classList.contains('open');
+    document.body.classList.toggle('sheet-open', open);
+    this.cb.onLayout?.();
+  }
+
   setTab(tab) {
     document.body.dataset.tab = tab;
+    setTimeout(() => this.syncSheet(), 0);
     $$('#tabbar button').forEach((x) => x.classList.toggle('on', x.dataset.tab === tab));
     if (tab !== 'brain') this.hideDetail();
     if (tab === 'inv') this.renderInventory();
@@ -302,7 +353,7 @@ export class Hud {
     if (!this.eegSeeded) {
       this.eegSeeded = true;
       for (const ev of snap.recent) if (Date.now() - ev.ts < 6 * 60e3) this.pushEeg(ev);
-      this.feed = snap.recent.filter((e) => e.k !== 'result' || e.err).slice(-40).reverse();
+      this.feed = snap.recent.filter((e) => e.k !== 'result' || e.err).slice(-400).reverse();
       for (const ev of snap.recent) this.trackTurn(ev);
       this.renderFeed();
     }
@@ -410,6 +461,7 @@ export class Hud {
       const p5 = pl?.h5.budget ? pl.h5.used / pl.h5.budget : null;
       items.push({ lvl: 'ok', ic: '✓', title: 'Todo en orden', text: `${act.length ? `${act.length} ${act.length === 1 ? 'sesión activa' : 'sesiones activas'}, ninguna pesada` : 'Ninguna sesión trabajando ahora'}${p5 != null ? ` · ${pctTxt(p5)} de la ventana de 5 h` : ''}.`, static: true });
     }
+    this.renderGlance(items);
     $('#now-list').innerHTML = items.map((it, i) => `<li class="g-${it.lvl}${it.static ? ' static' : ''}" data-i="${i}"><span class="ic">${it.ic}</span><div><b>${esc(it.title)}</b><span>${it.text}</span></div></li>`).join('');
     $$('#now-list li').forEach((li) => {
       const it = items[+li.dataset.i];
@@ -418,6 +470,29 @@ export class Hud {
         else if (it.card) { const c = $(`.card[data-card="${it.card}"]`); c.classList.remove('folded'); if (matchMedia('(max-width: 760px)').matches) this.setTab('metab'); c.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
       };
     });
+  }
+
+  /** Móvil: lo esencial encima del cerebro, sin abrir nada. */
+  renderGlance(items) {
+    const pl = this.snap?.plan;
+    const C = 2 * Math.PI * 7;
+    const mini = (label, w, sub, tab) => {
+      if (!w?.budget) return '';
+      const p = w.used / w.budget;
+      return `<button class="gl g-${levelOf(p)}" data-tab="${tab}"><svg viewBox="0 0 18 18"><circle cx="9" cy="9" r="7" class="trk"/><circle cx="9" cy="9" r="7" class="val" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C * (1 - Math.min(1, p))).toFixed(1)}"/></svg><b>${label} ${Math.round(p * 100)} %</b>${sub ? `<span>${sub}</span>` : ''}</button>`;
+    };
+    const warn = items.filter((i) => (i.lvl === 'bad' || i.lvl === 'warn') && !i.card);
+    const worst = warn.some((i) => i.lvl === 'bad') ? 'bad' : 'warn';
+    const nowChip = warn.length
+      ? `<button class="gl g-${worst}" data-tab="thought"><i></i><b>${warn.length} ${warn.length === 1 ? 'aviso' : 'avisos'}</b><span>${esc(warn[0].title)}</span></button>`
+      : `<button class="gl g-ok" data-tab="thought"><i></i><b>Todo en orden</b></button>`;
+    $('#glance').innerHTML = mini('5 h', pl?.h5, pl?.h5.end ? '· ' + hm(pl.h5.end) : '', 'metab') + mini('Semana', pl?.week, '', 'metab') + nowChip;
+    $$('#glance .gl').forEach((b) => { b.onclick = () => this.setTab(b.dataset.tab); });
+    const badge = $('#tabbar .badge');
+    const n = items.filter((i) => i.lvl === 'bad' || i.lvl === 'warn').length;
+    badge.hidden = !n;
+    badge.textContent = n;
+    badge.className = 'badge ' + (items.some((i) => i.lvl === 'bad') ? 'bad' : 'warn');
   }
 
   // ================= sesiones abiertas =================
@@ -717,10 +792,10 @@ export class Hud {
     if (ev.k === 'result' && !ev.err) return;
     this.trackTurn(ev);
     this.feed.unshift(ev);
-    if (this.feed.length > 60) this.feed.length = 60;
-    const ul = $('#feed');
-    ul.insertAdjacentHTML('afterbegin', this.feedItem(ev));
-    while (ul.children.length > 40) ul.lastElementChild.remove();
+    if (this.feed.length > 400) this.feed.length = 400;
+    this.fresh = ev;
+    this._freshAt = Date.now();
+    this.scheduleFeed();
     if (fromReplay || !this.snap) return;
     if (ev.k === 'thought') this.livePlan(ev);
     if (ev.k === 'thought' && !ev.a) {
@@ -737,19 +812,97 @@ export class Hud {
     }
   }
 
-  renderFeed() {
-    $('#feed').innerHTML = this.feed.slice(0, 40).map((e) => this.feedItem(e, true)).join('');
+  scheduleFeed() {
+    if (this._feedT) return;
+    this._feedT = setTimeout(() => { this._feedT = null; this.renderFeed(); }, 250);
   }
 
-  feedItem(e, quiet = false) {
-    const projName = (k) => this.snap?.projects.find((p) => p.key === k)?.name || '';
-    let kind = e.k, txt = '';
-    if (e.k === 'prompt') txt = `<q>${esc(e.text)}</q>`;
-    else if (e.k === 'thought') txt = `${esc(prettyM(e.m))} piensa <b>${tok(e.u[3])}</b> tok · lee ${tok(e.u[0] + e.u[1] + e.u[2])}`;
-    else if (e.k === 'tool') { kind = e.tgt.split(':')[0]; txt = `<b>${esc(e.tgt.startsWith('mcp:') ? e.tgt.slice(4).replace(/^claude_ai_/, '') + ' · ' + e.d : e.tgt.startsWith('tool:') ? e.n : e.tgt.split(':').slice(1).join(':'))}</b> ${e.tgt.startsWith('mcp:') ? '' : esc(e.d || '')}`; }
-    else if (e.k === 'result') { kind = 'error'; txt = `error en <b>${esc(e.n)}</b>`; }
-    const who = e.a ? `<span class="who agent">${esc(e.at)}</span>` : '';
-    return `<li class="k-${kind}${quiet ? ' quiet' : ''}"><time>${hhmm(e.ts)}</time><i></i><div><small>${esc(projName(e.p))}${who}</small>${txt}</div></li>`;
+  /** Impulsos agrupados por petición: tu mensaje como cabecera y debajo los pasos que desencadenó. */
+  renderFeed() {
+    const filter = this.feedFilter || 'all';
+    const isAgent = (e) => !!e.a || (e.k === 'tool' && e.tgt?.startsWith('agent:'));
+    const CAT = {
+      all: ['Todo', () => true],
+      prompt: ['Peticiones', null],
+      think: ['Razonamiento', (e) => e.k === 'thought' && !e.a],
+      tool: ['Acciones', (e) => e.k === 'tool' && !isAgent(e)],
+      agent: ['Subagentes', isAgent],
+      error: ['Errores', (e) => e.k === 'result' && e.err],
+    };
+    // cronológico para agrupar
+    const evs = this.feed.slice().reverse();
+    const groups = [], open = new Map();
+    for (const e of evs) {
+      let g = open.get(e.s);
+      if (!g || (e.k === 'prompt' && !e.a)) {
+        g = { key: e.s + ':' + e.ts, s: e.s, p: e.p, prompt: null, start: e.ts, last: e.ts, steps: [] };
+        groups.push(g); open.set(e.s, g);
+        if (e.k === 'prompt' && !e.a) { g.prompt = e; continue; }
+      }
+      g.last = Math.max(g.last, e.ts);
+      g.steps.push(e);
+    }
+    groups.sort((a, b) => b.last - a.last);
+
+    // contadores de los filtros (última hora visible en la lista)
+    const counts = {};
+    for (const [k, [, fn]] of Object.entries(CAT)) counts[k] = k === 'prompt' ? groups.filter((g) => g.prompt).length : k === 'all' ? this.feed.length : this.feed.filter(fn).length;
+    $('#feed-filter').innerHTML = Object.entries(CAT).map(([k, [label]]) => (k === 'error' && !counts.error) ? '' : `<button data-f="${k}" class="${k === filter ? 'on' : ''} f-${k}">${label}<small>${counts[k]}</small></button>`).join('');
+    $$('#feed-filter button').forEach((b) => { b.onclick = () => { this.feedFilter = b.dataset.f; this.renderFeed(); $('#feed').scrollTop = 0; }; });
+
+    const snap = this.snap;
+    const pname = (k) => snap?.projects.find((p) => p.key === k)?.name || '';
+    const sTitle = (id) => snap?.sessions.find((x) => x.id === id)?.title || 'Sesión sin título';
+    const pcol = (k) => { const n = this.nodes.get('project:' + k); return n ? cssColor(n.color) : '#888'; };
+    const keep = CAT[filter][1];
+    const now = Date.now();
+    let html = '';
+    let shownGroups = 0;
+    for (const g of groups) {
+      if (shownGroups >= 40) break;
+      if (filter === 'prompt' && !g.prompt) continue;
+      const steps = filter === 'prompt' ? [] : g.steps.filter(keep);
+      if (filter !== 'all' && filter !== 'prompt' && !steps.length) continue;
+      shownGroups++;
+      // herramientas iguales seguidas se funden en una sola línea (×n)
+      const rows = [];
+      for (const e of steps) {
+        const prev = rows[rows.length - 1];
+        if (prev && e.k === 'tool' && prev.e.k === 'tool' && prev.e.tgt === e.tgt && !!prev.e.a === !!e.a) { prev.n++; prev.last = e; continue; }
+        rows.push({ e, n: 1, last: e });
+      }
+      const MAX = this.expanded?.has(g.key) ? 999 : 7;
+      const hidden = Math.max(0, rows.length - MAX);
+      const live = now - g.last < 90e3;
+      const thoughts = g.steps.filter((e) => e.k === 'thought');
+      const cost = thoughts.reduce((a, e) => a + (e.c || 0), 0);
+      const nTools = g.steps.filter((e) => e.k === 'tool').length;
+      const meta = [hm(g.start), nTools ? `${nTools} ${nTools === 1 ? 'acción' : 'acciones'}` : '', cost ? money(cost) : ''].filter(Boolean).join(' · ');
+      html += `<li class="grp${live ? ' live' : ''}" style="--c:${pcol(g.p)}">
+        <div class="gh" data-id="session:${esc(g.s)}"><i></i><b>${esc(pname(g.p))}</b><span>${esc(sTitle(g.s))}</span><time>${meta}</time></div>
+        ${g.prompt ? `<q>${esc(g.prompt.text)}</q>` : '<p class="cont">continúa la sesión</p>'}
+        ${rows.length ? `<ol>${hidden ? `<li class="more" data-g="${esc(g.key)}">+ ${hidden} pasos anteriores</li>` : ''}${rows.slice(-MAX).map((r) => this.feedRow(r)).join('')}</ol>` : ''}
+      </li>`;
+    }
+    $('#feed').innerHTML = html || `<li class="empty">${filter === 'all' ? 'Sin actividad en las últimas 24 horas.' : 'Nada de este tipo por ahora.'}</li>`;
+    $$('#feed .gh').forEach((h) => { h.onclick = () => this.cb.onFocus(h.dataset.id); });
+    $$('#feed .more').forEach((m) => { m.onclick = () => { (this.expanded ||= new Set()).add(m.dataset.g); this.renderFeed(); }; });
+    const evN = this.feed.filter((e) => now - e.ts < 3600e3).length;
+    $('#feed-aside').textContent = `${evN.toLocaleString('es-ES')} en la última hora`;
+  }
+
+  feedRow({ e, n, last }) {
+    const fresh = this.fresh && (last === this.fresh) && Date.now() - (this._freshAt ||= Date.now()) < 1500;
+    let kind = e.k, label = '', detail = '';
+    if (e.k === 'thought') { label = prettyM(e.m); detail = `piensa ${tok(e.u[3])} · relee ${tok(e.u[0] + e.u[1] + e.u[2])}`; }
+    else if (e.k === 'tool') {
+      kind = e.tgt.split(':')[0];
+      if (e.tgt.startsWith('mcp:')) { label = e.tgt.slice(4).replace(/^claude_ai_/, '').replace(/_/g, ' '); detail = e.d || ''; }
+      else if (e.tgt.startsWith('tool:')) { label = e.n; detail = last.d || ''; }
+      else { label = e.tgt.split(':').slice(1).join(':'); detail = last.d || ''; }
+    } else if (e.k === 'result') { kind = 'error'; label = 'Error'; detail = 'en ' + e.n; }
+    const who = e.a ? `<em class="who">${esc(e.at)}</em>` : '';
+    return `<li class="k-${kind}${e.a ? ' sub' : ''}${fresh ? ' fresh' : ''}"><i></i><b>${esc(label)}${n > 1 ? `<sup>×${n}</sup>` : ''}</b>${who}<span>${esc(detail)}</span><time>${hhmm(last.ts)}</time></li>`;
   }
 
   pushEeg(ev) {
@@ -1038,7 +1191,7 @@ export class Hud {
       head = tiles([['7 días', money(w0?.c || 0)], ['Total', money(d.cost)], ['Sesiones', d.sessions.length], ['Por petición', w0?.n ? money(w0.c / w0.n) : '—']]);
       const ss = snap.sessions.filter((s) => s.project === d.key).sort((a, b) => b.last - a.last);
       extra = this.spark('byProject', d.key, color)
-        + (d.cwd ? `<h5>Abrir en la terminal</h5>${cmd(`cd ${q(d.cwd)} && claude`)}` : '')
+        + (d.cwd && !this.remote ? `<h5>Abrir en la terminal</h5>${cmd(`cd ${q(d.cwd)} && claude`)}` : '')
         + `<h5>Sesiones</h5><ul class="mini click">${ss.slice(0, 12).map((s) => `<li data-id="session:${s.id}"><span>${s.live ? '● ' : ''}${esc(s.title || s.id.slice(0, 8))}</span><b>${s.ctx && Date.now() - (s.ctxTs || 0) < LIVE_MS ? tok(s.ctx) + ' · ' : ''}${money(s.cost)}</b></li>`).join('')}</ul>`
         + list('Agentes que trabajan aquí', d.agents) + list('Skills', d.skills) + list('Herramientas', d.tools, (k) => k, 6) + list('Conectores', d.mcps, (k) => k.replace(/^claude_ai_/, '')) + list('Modelos (respuestas)', d.models, prettyM);
     } else if (n.type === 'session') {
@@ -1047,7 +1200,7 @@ export class Hud {
       const l = d.ctx ? ctxLevel(d.ctx) : 'ok';
       head = tiles([['Contexto por paso', d.ctx ? tok(d.ctx) : '—'], ['Consumo', money(d.cost)], ['Peticiones', d.prompts], ['Proyecto', esc(pname(d.project))]]);
       if (recent && l !== 'ok') head += `<div class="advice lvl-${l}">${l === 'high' ? `Cada paso relee <b>${tok(d.ctx)}</b>. Escribe <code>/compact</code> en esta sesión, o abre una nueva para la siguiente tarea.` : `Va creciendo: cuando termines lo que estás haciendo, <code>/compact</code>.`}</div>`;
-      extra = (p?.cwd ? `<h5>Retomar esta sesión</h5>${cmd(`cd ${q(p.cwd)} && claude --resume ${d.id}`, d.live ? 'Está abierta ahora mismo en otra terminal.' : '')}` : '')
+      extra = (p?.cwd && !this.remote ? `<h5>Retomar esta sesión</h5>${cmd(`cd ${q(p.cwd)} && claude --resume ${d.id}`, d.live ? 'Está abierta ahora mismo en otra terminal.' : '')}` : '')
         + list('Herramientas', d.tools) + list('Subagentes', d.agents) + list('Modelos (respuestas)', d.models, prettyM);
     } else if (n.type === 'model') {
       head = tiles([['Consumo', money(d.cost)], ['Respuestas', d.msgs.toLocaleString('es-ES')]]);
@@ -1073,10 +1226,11 @@ export class Hud {
     });
     el.scrollTop = 0;
     el.classList.add('open');
+    this.syncSheet();
     if (matchMedia('(max-width: 760px)').matches && document.body.dataset.tab !== 'brain') this.setTab('brain');
   }
 
-  hideDetail() { $('#detail').classList.remove('open'); }
+  hideDetail() { $('#detail').classList.remove('open'); this.syncSheet(); }
 
   setReplay(ts, frac) {
     this.replaying = ts != null;

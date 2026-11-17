@@ -36,15 +36,29 @@ function homeDistance() {
 }
 camera.position.copy(HOME).add(new THREE.Vector3(-17.5, 6.5, 15.5).setLength(homeDistance()));
 
-// En escritorio, centra el cerebro en el hueco libre entre los paneles, no en el centro de la ventana
+// En escritorio, centra el cerebro en el hueco libre entre los paneles, no en el centro de la ventana.
+// En el móvil, cuando se abre una hoja inferior, sube el cerebro para que siga viéndose encima.
+const view = { dx: 0, dy: 0, tx: 0, ty: 0 };
 function updateViewOffset() {
   const W = window.innerWidth, H = window.innerHeight;
   const left = document.getElementById('left'), right = document.getElementById('right');
-  if (W <= 760 || !left || !right) { camera.clearViewOffset(); return; }
+  if (W <= 760) {
+    view.tx = 0;
+    view.ty = document.body.classList.contains('sheet-open') ? H * 0.27 : 0;
+    return;
+  }
+  if (!left || !right) { view.tx = view.ty = 0; return; }
   const L = left.getBoundingClientRect().right;
   const R = right.getBoundingClientRect().left;
-  const dx = (L + R) / 2 - W / 2;
-  camera.setViewOffset(W, H, -dx, 0, W, H);
+  view.tx = -((L + R) / 2 - W / 2);
+  view.ty = 0;
+}
+function applyViewOffset(snap) {
+  const k = snap ? 1 : 0.12;
+  view.dx += (view.tx - view.dx) * k;
+  view.dy += (view.ty - view.dy) * k;
+  if (Math.abs(view.dx) < 0.5 && Math.abs(view.dy) < 0.5 && !view.tx && !view.ty) { camera.clearViewOffset(); return; }
+  camera.setViewOffset(window.innerWidth, window.innerHeight, view.dx, view.dy, window.innerWidth, window.innerHeight);
 }
 
 /** Recoloca la cámara a la distancia justa, sin cambiar el ángulo de vista. */
@@ -345,6 +359,7 @@ function frame() {
     camera.position.lerpVectors(focusAnim.camFrom, focusAnim.camTo, e);
     if (focusAnim.t >= 1) focusAnim = null;
   }
+  applyViewOffset();
   controls.update();
   pulses.update(dt);
 
@@ -386,6 +401,7 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   updateViewOffset();
+  applyViewOffset(true);
   if (!focused && !focusAnim) { controls.target.copy(HOME); refit(); }
   renderer.setSize(window.innerWidth, window.innerHeight);
   composer.setSize(window.innerWidth, window.innerHeight);
@@ -403,8 +419,10 @@ function connect() {
 
 canvas.addEventListener('dblclick', () => { hud.hideDetail(); goHome(); });
 updateViewOffset();
+applyViewOffset(true);
 await load();
 updateViewOffset();
+applyViewOffset(true);
 refit();
 live = liveSet();
 setInterval(() => { live = liveSet(); }, 2000);

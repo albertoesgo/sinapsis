@@ -45,7 +45,7 @@ Y en los paneles:
 - **Avisos**: cuando una sesión pasa de 200 k, 400 k o 600 k de contexto, llega una notificación de macOS y un aviso en la app (también en el móvil si la tienes abierta), sugiriendo `/compact` o una sesión nueva.
 - **Informe semanal** (botón *Informe* y notificación los lunes a las 9:00): peticiones, valor por petición frente a la semana anterior, sesiones más pesadas, tendencia por proyecto y qué cambiar.
 - **Valor por petición** de cada proyecto en los últimos 7 días, con su tendencia.
-- **Impulsos**: la secuencia de eventos en directo.
+- **Impulsos**: los eventos en directo, agrupados por petición (tu mensaje y debajo los pasos que desencadenó), con filtros por tipo, herramientas repetidas fundidas en una línea y coste de cada petición.
 - **EEG**: cuatro canales (entrada, razonamiento, acción y subagentes) con un pico por cada evento real de los últimos 3 minutos.
 - **Inventario**: skills, agentes, herramientas, conectores y memoria, con lo que está en uso, lo usado hoy y lo que nunca se ha usado.
 - **Reproducir 24 h**: vuelve a lanzar, acelerada, la actividad real del último día.
@@ -91,7 +91,7 @@ Opciones: `--port 7420`, `--claude-dir /ruta/a/.claude` (también respeta `CLAUD
 npm start -- --lan
 ```
 
-Con `--lan`, Sinapsis también responde en tu wifi, protegido con una clave secreta que se genera sola (`~/.sinapsis/token`). En el ordenador, pulsa **Móvil** y escanea el código QR con el móvil, que tiene que estar en la misma red. En Safari, *Compartir → Añadir a pantalla de inicio* lo deja como una app. Sin la clave, el servidor devuelve un 401 y no muestra nada.
+Con `--lan`, Sinapsis también responde en tu wifi, protegido con una clave secreta que se genera sola (`~/.sinapsis/token`). En el ordenador, pulsa **Móvil** y escanea el código QR con el móvil, que tiene que estar en la misma red. En Safari, *Compartir → Añadir a pantalla de inicio* lo deja como una app. En el móvil, encima del cerebro tienes el plan y los avisos de un vistazo; las hojas se cierran deslizando hacia abajo. Sin la clave, el servidor devuelve un 401 y no muestra nada.
 
 Si macOS pregunta si `node` puede aceptar conexiones entrantes, pulsa **Permitir**.
 

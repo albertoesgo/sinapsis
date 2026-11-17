@@ -25,6 +25,7 @@
     <h1>Sinapsis <i id="conn" class="off"></i> <em id="demo-badge" hidden>demo</em></h1>
     <p id="status" class="status">Conectando…</p>
   </header>
+  <div id="glance"></div>
 
 
   <nav id="controls">
@@ -82,8 +83,8 @@
       <div class="body"></div>
     </section>
     <section class="card grow" data-card="impulses" id="impulses">
-      <header><h2>Impulsos</h2><span class="aside">en directo</span><button class="fold" title="Plegar"></button></header>
-      <div class="body"><ul id="feed"></ul></div>
+      <header><h2>Impulsos</h2><span class="aside" id="feed-aside">en directo · agrupados por petición</span><button class="fold" title="Plegar"></button></header>
+      <div class="body"><div id="feed-filter"></div><ul id="feed"></ul></div>
     </section>
   </aside>
 
@@ -181,7 +182,7 @@
   <nav id="tabbar">
     <button data-tab="brain" class="on"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="3"/><circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".6"/></svg><span>Cerebro</span></button>
     <button data-tab="metab"><svg viewBox="0 0 20 20"><path d="M10 3a7 7 0 1 0 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M10 10l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span>Plan</span></button>
-    <button data-tab="thought"><svg viewBox="0 0 20 20"><path d="M3 6h14M3 10h9M3 14h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span>Ahora</span></button>
+    <button data-tab="thought"><svg viewBox="0 0 20 20"><path d="M3 6h14M3 10h9M3 14h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span>Ahora</span><i class="badge" hidden></i></button>
     <button data-tab="feed"><svg viewBox="0 0 20 20"><path d="M2 10h3l2-5 3 10 2-6 2 3h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span>Impulsos</span></button>
     <button data-tab="inv"><svg viewBox="0 0 20 20"><rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="11" y="3" width="6" height="6" rx="1.5"/><rect x="3" y="11" width="6" height="6" rx="1.5"/><rect x="11" y="11" width="6" height="6" rx="1.5"/></svg><span>Inventario</span></button>
   </nav>
