@@ -60,6 +60,21 @@ Atajos: <kbd>⌘K</kbd> o <kbd>/</kbd> buscar, <kbd>R</kbd> informe, <kbd>I</kbd
 
 ![Búsqueda con ⌘K](docs/busqueda.png)
 
+## Mapa de proyectos: dónde mirar (y vault de Obsidian)
+
+Lo que más tokens gasta en Claude Code no es lo que escribe, sino **buscar**: Glob, Grep y abrir ficheros enteros hasta dar con el sitio, y cada paso relee todo el contexto. Sinapsis aprende de tu historial real qué ficheros se leen y editan en cada petición, con qué órdenes se prueba cada proyecto y cuántos pasos se dedican a buscar antes de tocar nada. Con eso:
+
+- **En la ficha de cada proyecto**, «Dónde mirar» muestra sus ficheros clave y un buscador: escribes la tarea y te dice por qué ficheros empezar, a partir de las peticiones parecidas que ya hiciste.
+- **Desde la terminal** (o desde Claude):
+  ```bash
+  node scripts/donde.mjs --dir ~/mi-proyecto "el botón de pagar no responde en el móvil"
+  node scripts/donde.mjs --dir ~/mi-proyecto --mapa      # ficheros clave, órdenes y tareas recientes
+  ```
+- **Skill para Claude Code** (`npm run skill:install`): antes de explorar un proyecto, Claude consulta el mapa y va directo a los ficheros. A diferencia de un conector MCP, que carga sus definiciones en cada paso de cada sesión, una skill solo ocupa su descripción (~60 tokens) hasta que se usa.
+- **Vault de Obsidian** en `~/.sinapsis/vault`, regenerado cada 10 minutos. Cada proyecto tiene una nota: zona del cerebro, dónde mirar (con las líneas de cada fichero), cómo se ejecuta, tareas recientes con sus ficheros, skills y conectores, y consejos concretos para gastar menos («`js/admin.js`, 852 líneas, se ha leído 25 veces: pide solo la parte que toca»). Las notas de proyectos, skills, conectores y zonas están enlazadas: la vista de grafo de Obsidian dibuja el mismo cerebro. Se puede desactivar con `"vault": false` en `~/.sinapsis/config.json` o cambiar de carpeta con `"vaultDir"`.
+
+Es una pista estadística (palabras en común con peticiones anteriores, ponderadas por su rareza, más el nombre de los ficheros), no una lectura del código: si no hay historial parecido, se explora como siempre.
+
 ## Qué es real y qué no
 
 Todos los datos salen de los registros que Claude Code ya guarda en `~/.claude/projects/**/*.jsonl` (uso de tokens de cada respuesta, llamadas a herramientas, subagentes, títulos de sesión…) y de lo que tienes instalado en `~/.claude/skills`, los plugins y las carpetas de memoria. **Nada sale de tu ordenador**: por defecto el servidor solo escucha en `127.0.0.1`, nunca hace peticiones a internet y, si activas el acceso desde el móvil, solo responde en tu red local y con clave.
@@ -152,6 +167,7 @@ flowchart LR
 
 ### Ficheros
 
+- `server/where.js` aprende el mapa de cada proyecto y responde «dónde mirar» (TF-IDF sobre peticiones pasadas). `server/vault.js` genera el vault de Obsidian y `scripts/donde.mjs` lo lleva a la terminal.
 - `server/plan.js` reconstruye las ventanas de 5 horas y la semana a partir del consumo en franjas de 10 minutos y de los cortes reales.
 - `server/ingest.js` lee los `.jsonl` de forma incremental (por desplazamiento de bytes), descarta duplicados por id de mensaje y agrega el uso de tokens, el coste, las herramientas, las skills, los subagentes, los conectores y la memoria. Envía cada evento al navegador por *Server-Sent Events*.
 - `server/inventory.js` hace inventario de lo instalado, se use o no.

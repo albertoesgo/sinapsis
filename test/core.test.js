@@ -125,3 +125,58 @@ test('weeklyReport: mapa de ritmo de 7 × 24', () => {
   close(r.rhythm.flat().reduce((a, b) => a + b, 0), 2);
   assert.ok(r.tips.length >= 1);
 });
+
+// ---------- mapa «dónde mirar» ----------
+import { tokenize, where, projectMap, stem } from '../server/where.js';
+import { normCmd, pathTokens } from '../server/ingest.js';
+
+test('tokenize: palabras con significado, sin acentos ni palabras vacías', () => {
+  assert.deepEqual(tokenize('Arregla el botón de pagar en el móvil, por favor'), ['arregla', 'boton', 'pagar', 'movil']);
+  assert.equal(stem('sesiones'), stem('sesion'));
+  assert.equal(stem('avisos'), stem('aviso'));
+});
+
+test('normCmd y pathTokens: órdenes útiles y ficheros nombrados en la terminal', () => {
+  assert.equal(normCmd('npm run build -- --watch'), 'npm run build');
+  assert.equal(normCmd('node server/index.js --port 7421'), 'node server/index.js');
+  assert.equal(normCmd('git status'), null);
+  assert.equal(normCmd('ls -la'), null);
+  assert.deepEqual([...pathTokens("sed -i '' 's/a/b/' public/style.css && node scripts/build.mjs")], ['public/style.css', 'scripts/build.mjs']);
+});
+
+test('ingest: cada petición recuerda sus ficheros y los pasos de búsqueda antes de editar', () => {
+  const b = newBrain();
+  const t = Date.now() - 60e3;
+  const at = (s) => new Date(t + s * 1000).toISOString();
+  b.processRecord({ type: 'user', timestamp: at(0), sessionId: 'ses-1', cwd: '/tmp/proj', message: { content: 'Arregla el cálculo del carrito' } }, ctx);
+  const tool = (id, name, input, s) => b.processRecord(assistant(id, t + s * 1000, { output_tokens: 10 }, [{ type: 'tool_use', id: 'tu_' + id, name, input }]), ctx);
+  tool('a', 'Grep', { pattern: 'cart' }, 1);
+  tool('b', 'Read', { file_path: '/tmp/proj/src/cart.js' }, 2);
+  tool('c', 'Edit', { file_path: '/tmp/proj/src/cart.js' }, 3);
+  tool('d', 'Bash', { command: 'npm test' }, 4);
+  const p = b.s.projects.proj;
+  assert.equal(p.turns.length, 1);
+  assert.deepEqual(p.turns[0].f, { 'src/cart.js': 4 });
+  assert.equal(p.turns[0].x, 2); // Grep y Read antes de la primera edición
+  assert.equal(p.turns[0].e, true);
+  assert.deepEqual(p.files['src/cart.js'], { r: 1, e: 1, last: t + 3000 });
+  assert.equal(p.cmds['npm test'], 1);
+  assert.equal(projectMap(p).explore, 2);
+});
+
+test('where: peticiones parecidas y nombres de fichero llevan al sitio correcto', () => {
+  const now = Date.now();
+  const p = {
+    files: { 'src/cart.js': { r: 5, e: 4, last: now }, 'src/login.js': { r: 3, e: 2, last: now }, 'src/styles/theme.css': { r: 2, e: 2, last: now } },
+    cmds: { 'npm test': 3 },
+    turns: [
+      { ts: now - 1e6, q: tokenize('el carrito suma mal los descuentos'), t: 'el carrito suma mal', f: { 'src/cart.js': 4 } },
+      { ts: now - 2e6, q: tokenize('no se puede iniciar sesión con google'), t: 'login google', f: { 'src/login.js': 4 } },
+      { ts: now - 3e6, q: tokenize('modo oscuro en la portada'), t: 'modo oscuro', f: { 'src/styles/theme.css': 4 } },
+    ],
+  };
+  assert.equal(where(p, 'los descuentos del carrito').files[0].rel, 'src/cart.js');
+  assert.equal(where(p, 'falla iniciar sesión').files[0].rel, 'src/login.js');
+  assert.equal(where(p, 'cambiar el theme').files[0].rel, 'src/styles/theme.css'); // por el nombre del fichero
+  assert.equal(where(p, 'xyz').files.length, 0);
+});

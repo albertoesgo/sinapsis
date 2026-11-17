@@ -57,6 +57,9 @@ fs.mkdirSync(path.join(OUT, 'demo'), { recursive: true });
 fs.writeFileSync(path.join(OUT, 'demo', 'snapshot.json'), JSON.stringify(snapshot));
 fs.writeFileSync(path.join(OUT, 'demo', 'report.json'), JSON.stringify(report));
 fs.writeFileSync(path.join(OUT, 'demo', 'events.json'), JSON.stringify(events));
+// «dónde mirar» en el navegador: el mapa sintético de cada proyecto y el mismo código que usa el servidor
+fs.writeFileSync(path.join(OUT, 'demo', 'maps.json'), JSON.stringify(Object.fromEntries(Object.values(brain.s.projects).map((p) => [p.key, { files: p.files, turns: p.turns, cmds: p.cmds }]))));
+fs.copyFileSync(path.join(ROOT, 'server', 'where.js'), path.join(OUT, 'js', 'where.js'));
 
 // página: modo estático, vista previa para redes y enlace al código
 fs.copyFileSync(path.join(ROOT, 'docs', 'og.png'), path.join(OUT, 'og.png'));

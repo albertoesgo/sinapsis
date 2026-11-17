@@ -90,6 +90,41 @@ export const detailMethods = {
     return `<small class="type">${TYPE_LABEL[n.type] || n.type}${region ? ' · ' + region : ''}</small><h4>${esc(n.label)}</h4>${body}${d.last ? kv('Última actividad', `${stl} · ${ago(d.last)}`) : ''}${desc}`;
   },
 
+  /** «Dónde mirar»: ficheros clave del proyecto y buscador de dónde empezar una tarea. */
+  whereHtml(d) {
+    const m = d.map;
+    if (!m) return '';
+    const exp = m.explore != null ? `<p class="where-exp">Antes de editar, Claude da <b>${m.explore.toLocaleString('es-ES', { maximumFractionDigits: 1 })} pasos</b> buscando${m.exploreShare != null ? ` (${Math.round(m.exploreShare * 100)} % de los pasos)` : ''}. Con este mapa puede ir directo.</p>` : '';
+    return `<h5>Dónde mirar</h5>${exp}
+      <div class="where-q"><input type="search" placeholder="¿Qué vas a hacer? p. ej. «arreglar el checkout»" autocomplete="off" enterkeyhint="search" /></div>
+      <ul class="mini where-list">${this.hotRows(m.hot)}</ul>
+      ${m.cmds?.length ? `<div class="chips where-cmds">${m.cmds.map(([c]) => `<em><code>${esc(c)}</code></em>`).join('')}</div>` : ''}`;
+  },
+
+  hotRows(hot, scored = false) {
+    if (!hot?.length) return '<li class="empty"><span>Aún no hay ficheros registrados.</span></li>';
+    const stars = (x) => (x > 0.66 ? '●●●' : x > 0.33 ? '●●○' : '●○○');
+    return hot.map((h) => `<li title="${esc(h.why ? '«' + h.why + '»' : h.rel)}"><span><code>${esc(h.rel)}</code></span><b>${scored ? `<i class="st">${stars(h.score)}</i> ` : ''}${h.r} lect. · ${h.e} edic.</b></li>`).join('');
+  },
+
+  bindWhere(el, d) {
+    const inp = $('.where-q input', el);
+    if (!inp) return;
+    const ul = $('.where-list', el);
+    let tmr = null, seq = 0;
+    inp.oninput = () => {
+      clearTimeout(tmr);
+      const q = inp.value.trim();
+      if (!q) { ul.innerHTML = this.hotRows(d.map.hot); return; }
+      tmr = setTimeout(async () => {
+        const my = ++seq;
+        const r = await this.cb.api(`api/where?p=${encodeURIComponent(d.key)}&q=${encodeURIComponent(q)}`);
+        if (my !== seq || !r) return;
+        ul.innerHTML = r.files?.length ? this.hotRows(r.files, true) : '<li class="empty"><span>Nada parecido en el historial: tocará explorar.</span></li>';
+      }, 220);
+    };
+  },
+
   /** Mini gráfica de 30 días para un proyecto o un modelo. */
   spark(field, key, color) {
     const snap = this.snap;
@@ -137,6 +172,7 @@ export const detailMethods = {
       head = tiles([['7 días', money(w0?.c || 0)], ['Total', money(d.cost)], ['Sesiones', d.sessions.length], ['Por petición', w0?.n ? money(w0.c / w0.n) : '—']]);
       const ss = snap.sessions.filter((s) => s.project === d.key).sort((a, b) => b.last - a.last);
       extra = this.spark('byProject', d.key, color)
+        + this.whereHtml(d)
         + (d.cwd && !this.remote ? `<h5>Abrir en la terminal</h5>${cmd(`cd ${q(d.cwd)} && claude`)}` : '')
         + `<h5>Sesiones</h5><ul class="mini click">${ss.slice(0, 12).map((s) => `<li data-id="session:${s.id}"><span>${s.live ? '● ' : ''}${esc(s.title || s.id.slice(0, 8))}</span><b>${s.ctx && Date.now() - (s.ctxTs || 0) < LIVE_MS ? tok(s.ctx) + ' · ' : ''}${money(s.cost)}</b></li>`).join('')}</ul>`
         + list('Agentes que trabajan aquí', d.agents) + list('Skills', d.skills) + list('Herramientas', d.tools, (k) => k, 6) + list('Conectores', d.mcps, (k) => k.replace(/^claude_ai_/, '')) + list('Modelos (respuestas)', d.models, prettyM);
@@ -162,6 +198,7 @@ export const detailMethods = {
     const cut = desc.indexOf('</h4>') + 5;
     $('.content', el).innerHTML = desc.slice(0, cut) + head + desc.slice(cut) + extra;
     $$('.click li', el).forEach((li) => { li.onclick = () => this.cb.onFocus(li.dataset.id); });
+    this.bindWhere(el, d);
     $$('[data-copy]', el).forEach((b) => {
       b.onclick = async () => {
         const ok = await copy(b.dataset.copy);

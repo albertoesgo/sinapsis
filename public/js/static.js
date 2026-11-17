@@ -6,6 +6,7 @@ const TS_KEYS = new Set(['ts', 'last', 'first', 'ctxTs', 'start', 'end', 'resetT
 let offset = 0;
 let dayShift = 0;
 let cached = null;
+let mapsP = null;
 
 const midnight = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
 
@@ -41,6 +42,12 @@ export async function api(path) {
   if (path.startsWith('api/report')) return shift(await fetch('demo/report.json').then((r) => r.json()));
   if (path.startsWith('api/mobile')) return { remote: true };
   if (path.startsWith('api/alerts')) return [];
+  if (path.startsWith('api/where')) {
+    const u = new URL(path, location.href);
+    const [{ where }, maps] = await Promise.all([import('./where.js'), mapsP ||= fetch('demo/maps.json').then((r) => r.json())]);
+    const p = maps[u.searchParams.get('p')];
+    return p ? where({ ...p, turns: p.turns.map((t) => ({ ...t, ts: t.ts + offset })) }, u.searchParams.get('q') || '', { limit: 8 }) : null;
+  }
   return null;
 }
 

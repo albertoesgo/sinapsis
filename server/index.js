@@ -15,6 +15,8 @@ import { weeklyReport } from './report.js';
 import { loadConfig, notify } from './notify.js';
 import { planStatus } from './plan.js';
 import { manifest, folderVersion } from './manifest.js';
+import { buildVault } from './vault.js';
+import { findProject, where } from './where.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -106,6 +108,13 @@ const brain = new Brain({
   onAlert: raise,
 });
 
+const VAULT_DIR = path.join(os.homedir(), '.sinapsis', 'vault');
+let vaultInfo = null;
+let lastVaultMark = '';
+let rebuildVault = () => {};
+/** Cambia cuando hay peticiones o ficheros nuevos (para no regenerar el vault sin motivo). */
+const vaultMark = () => Object.values(brain.s.projects).map((p) => `${p.turns?.length || 0}:${p.last}`).join('|');
+
 function boot() {
   const t = Date.now();
   if (DEMO) {
@@ -139,6 +148,18 @@ function boot() {
     raise({ kind: 'weekly', ts: Date.now(), title: 'Tu semana con Claude Code', body: `${r.cur.prompts} peticiones · ≈${r.cur.perPrompt.toFixed(2)} US$ por petición${trend}. ${r.tips[0].title}: ${r.tips[0].text}` });
   }, 60000);
   setInterval(() => { try { brain.save(); } catch (e) { console.error('save', e.message); } }, 30000);
+  // Vault de Obsidian con el mapa de cada proyecto (~/.sinapsis/vault): al arrancar y cada 10 min si hay novedades
+  const vault = () => {
+    if (!config.vault) return;
+    try {
+      const r = buildVault(brain.s, brain.inventory, config.vaultDir || VAULT_DIR);
+      vaultInfo = { ...r, at: Date.now() };
+      lastVaultMark = vaultMark();
+    } catch (e) { console.error('vault', e.message); }
+  };
+  vault();
+  setInterval(() => { if (vaultMark() !== lastVaultMark) vault(); }, 10 * 60e3);
+  rebuildVault = vault;
   // Avisos del plan: al pasar del 75 % y del 90 % del presupuesto estimado de la ventana de 5 h o de la semana
   setInterval(() => {
     const pl = planStatus(brain.s);
@@ -214,6 +235,18 @@ const server = http.createServer((req, res) => {
   }
   if (p === '/api/report') {
     sendJson(req, res, weeklyReport(brain.s, brain.snapshot({ recent: false }).lastShape));
+    return;
+  }
+  if (p === '/api/where') {
+    // «dónde mirar»: ficheros con los que empezar una tarea en un proyecto, aprendidos del historial
+    const proj = findProject(brain.s, url.searchParams.get('p') || '');
+    if (!proj) { sendJson(req, res, { error: 'proyecto desconocido' }); return; }
+    sendJson(req, res, { project: proj.name, ...where(proj, url.searchParams.get('q') || '', { limit: 8 }) });
+    return;
+  }
+  if (p === '/api/vault') {
+    if (url.searchParams.get('rebuild') === '1' && isLoopback(req)) rebuildVault();
+    sendJson(req, res, vaultInfo ? { ...vaultInfo, dir: isLoopback(req) ? vaultInfo.dir : undefined } : { disabled: DEMO || !config.vault });
     return;
   }
   if (p === '/api/alerts') {

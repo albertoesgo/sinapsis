@@ -15,15 +15,19 @@ const TOOLS = ['Bash', 'Bash', 'Bash', 'Read', 'Read', 'Edit', 'Write', 'WebFetc
 const MCP = ['mcp__claude_ai_Canva__generate-image', 'mcp__claude_ai_Unsplash__search_photos', 'mcp__claude_ai_Docs__batch'];
 const SKILLS = ['dataviz', 'pdf', 'redes', 'docs'];
 const AGENTS = ['general-purpose', 'Explore', 'Plan'];
+// Cada petición sintética toca ficheros con sentido, para que el mapa «dónde mirar» de la demo sea creíble
 const PROMPTS = [
-  'Añade un modo oscuro a la página de inicio',
-  'Revisa por qué falla el build en producción',
-  'Haz un carrusel de 5 posts para la nueva colección',
-  'Optimiza las imágenes y el LCP de la home',
-  'Escribe tests para el cálculo de rutas',
-  'Resume los datos de lluvia de la última semana',
-  'Prepara el PR con los cambios del checkout',
+  ['Añade un modo oscuro a la página de inicio', ['src/styles/theme.css', 'src/pages/Home.jsx', 'src/components/Header.jsx']],
+  ['Revisa por qué falla el build en producción', ['vite.config.js', 'package.json', '.github/workflows/deploy.yml']],
+  ['Haz un carrusel de 5 posts para la nueva colección', ['content/coleccion-otono.md', 'scripts/carrusel.mjs']],
+  ['Optimiza las imágenes y el LCP de la home', ['src/pages/Home.jsx', 'src/components/Hero.jsx', 'scripts/optimize-images.mjs']],
+  ['Escribe tests para el cálculo de rutas', ['src/lib/routes.js', 'tests/routes.test.js']],
+  ['Resume los datos de lluvia de la última semana', ['data/lluvia.csv', 'scripts/resumen.py']],
+  ['Prepara el PR con los cambios del checkout', ['src/pages/Checkout.jsx', 'src/lib/cart.js', 'tests/cart.test.js']],
+  ['El botón de pagar no responde en el móvil', ['src/pages/Checkout.jsx', 'src/components/PayButton.jsx', 'src/styles/mobile.css']],
+  ['Cambia los textos del aviso legal', ['content/aviso-legal.md', 'src/pages/Legal.jsx']],
 ];
+const RUN = ['npm test', 'npm run build', 'npm run dev', 'npx vitest run', 'npm run lint'];
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const R = (a, b) => Math.floor(a + Math.random() * (b - a));
 
@@ -51,7 +55,9 @@ export function buildDemo(brain) {
     const steps = [];
     let t = t0;
     const model = pick(MODELS);
-    steps.push([t, () => feed(sess, { type: 'user', timestamp: new Date(t0).toISOString(), message: { content: pick(PROMPTS) } })]);
+    const [prompt, pfiles] = pick(PROMPTS);
+    const fp = () => `${sess.p.cwd}/${pick(pfiles)}`;
+    steps.push([t, () => feed(sess, { type: 'user', timestamp: new Date(t0).toISOString(), message: { content: prompt } })]);
     const n = R(2, 7);
     for (let i = 0; i < n; i++) {
       t += R(1500, 6000);
@@ -60,7 +66,11 @@ export function buildDemo(brain) {
       if (r < 0.08) tool = { name: 'Skill', input: { skill: pick(SKILLS) } };
       else if (r < 0.16) tool = { name: 'Agent', input: { subagent_type: pick(AGENTS), description: 'Investigar en paralelo' } };
       else if (r < 0.24) tool = { name: pick(MCP), input: {} };
-      else tool = { name: pick(TOOLS), input: { description: pick(['Compilar', 'Ejecutar tests', 'Listar ficheros', 'Instalar dependencias']), file_path: '/demo/src/app.js' } };
+      else {
+        // como en una petición real: busca, lee sus ficheros y acaba editando alguno
+        const name = i === 0 ? 'Read' : i === n - 1 ? 'Edit' : i < 2 && Math.random() < 0.5 ? pick(['Grep', 'Glob', 'Read']) : pick(TOOLS);
+        tool = { name, input: name === 'Bash' ? { command: pick(RUN), description: pick(['Compilar', 'Ejecutar tests', 'Comprobar']) } : name === 'Grep' || name === 'Glob' ? { pattern: pick(['TODO', '*.jsx', 'checkout']) } : { file_path: fp() } };
+      }
       const id = 'toolu_' + randomUUID();
       const tt = t;
       steps.push([tt, () => assistant(sess, tt, model, [{ type: 'tool_use', id, ...tool }])]);

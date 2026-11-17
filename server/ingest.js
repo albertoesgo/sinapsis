@@ -6,8 +6,11 @@ import os from 'node:os';
 import { costOf, prettyModel } from './pricing.js';
 import { scanInventory } from './inventory.js';
 import { planStatus } from './plan.js';
+import { tokenize, projectMap } from './where.js';
 
-const CACHE_VERSION = 8;
+const CACHE_VERSION = 9;
+const TURNS_MAX = 400;   // peticiones recordadas por proyecto para el mapa «dónde mirar»
+const FILES_MAX = 600;
 const SLOT_MS = 10 * 60e3; // consumo en franjas de 10 min, para las ventanas del plan
 const SLOT_KEEP_MS = 45 * 86400e3;
 
@@ -45,6 +48,35 @@ const addTok = (a, b) => { a.in += b.in; a.cr += b.cr; a.cw += b.cw; a.out += b.
 const inc = (obj, k, n = 1) => { obj[k] = (obj[k] || 0) + n; };
 const day = (ts) => new Date(ts).toLocaleDateString('sv-SE'); // AAAA-MM-DD en hora local
 const clip = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s || '');
+
+// Solo órdenes que ejecutan algo del proyecto (no git, ni utilidades de shell, ni texto suelto)
+const RUNNER = /^(npm|npx|pnpm|yarn|bun|bunx|node|deno|tsx|python3?|pip3?|uv|poetry|pytest|make|cargo|go|docker|docker-compose|wrangler|vercel|netlify|supabase|firebase|flutter|dart|swift|xcodebuild|gradle|ruby|bundle|rails|php|composer|mvn|dotnet|terraform|kubectl|vite|remotion|bash|sh|\.{1,2}\/\S+|\.venv\/bin\/\S+|venv\/bin\/\S+)$/;
+/** «npm run build -- --x» → «npm run build»; solo órdenes de ejecución reconocibles y de 2 o 3 palabras. */
+export function normCmd(cmd) {
+  const out = [];
+  for (const t of String(cmd).trim().split(/\s+/)) {
+    if (out.length >= 3 || /^-|["'`$<>|&;=*(){}\\]|:\/\//.test(t) || t.length > 40) break;
+    out.push(t);
+  }
+  if (out.length < 2 || !RUNNER.test(out[0])) return null;
+  if (/^(bash|sh)$/.test(out[0]) && !/\.sh$/.test(out[1])) return null;
+  return out.join(' ');
+}
+
+const fileCache = new Map();
+/** ¿Existe este fichero? (con caché: la misma ruta aparece en muchas órdenes) */
+function isFile(abs) {
+  if (!fileCache.has(abs)) { let ok = false; try { ok = fs.statSync(abs).isFile(); } catch { ok = false; } fileCache.set(abs, ok); if (fileCache.size > 50000) fileCache.clear(); }
+  return fileCache.get(abs);
+}
+const PATH_RE = /(?:^|[\s'"=(:,])((?:~\/|\.{1,2}\/|\/)?[\w@.-]+(?:\/[\w@.[\]-]+)*\/?[\w@.[\]-]*\.(?:js|mjs|cjs|ts|tsx|jsx|css|scss|html|md|mdx|json|py|rb|go|rs|java|kt|swift|vue|svelte|astro|sh|yml|yaml|toml|sql|txt|csv))\b/gi;
+/** Rutas de fichero que aparecen en una orden de terminal (como mucho 24). */
+export function pathTokens(cmd) {
+  const out = new Set();
+  for (const m of String(cmd).matchAll(PATH_RE)) { if (!/^https?:/.test(m[1]) && !m[1].includes('node_modules')) out.add(m[1]); if (out.size >= 24) break; }
+  return out;
+}
+
 
 const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
 /** «10:50pm», «3am», «Nov 13 at 1am» → marca de tiempo (hora local del ordenador). */
@@ -111,6 +143,7 @@ export class Brain {
     this.liveSessions = new Set();
     this.inventory = { skills: {}, agents: {}, memory: {} };
     this.home = os.homedir();
+    this.openTurn = new Map(); // sesión → petición en curso (para saber qué ficheros sirvieron para qué)
   }
 
   // ---------- persistencia ----------
@@ -133,6 +166,12 @@ export class Brain {
     this.s.seenMsg = arr.slice(-20000);
     if (this.seen.size > 30000) this.seen = new Set(this.s.seenMsg);
     this.s.recent = this.s.recent.filter((e) => e.ts > Date.now() - RECENT_MS).slice(-RECENT_MAX);
+    for (const p of Object.values(this.s.projects)) {
+      const fs_ = Object.entries(p.files || {});
+      if (fs_.length > FILES_MAX) p.files = Object.fromEntries(fs_.sort((a, b) => (b[1].r + 3 * b[1].e) - (a[1].r + 3 * a[1].e) || b[1].last - a[1].last).slice(0, Math.round(FILES_MAX * 0.7)));
+      const cs = Object.entries(p.cmds || {});
+      if (cs.length > 80) p.cmds = Object.fromEntries(cs.sort((a, b) => b[1] - a[1]).slice(0, 60));
+    }
     const minSlot = Math.floor((Date.now() - SLOT_KEEP_MS) / SLOT_MS);
     for (const k of Object.keys(this.s.slots)) if (+k < minSlot) delete this.s.slots[k];
     fs.mkdirSync(path.dirname(this.cacheFile), { recursive: true });
@@ -240,7 +279,7 @@ export class Brain {
   project(key, cwd) {
     let p = this.s.projects[key];
     if (!p) {
-      p = this.s.projects[key] = { key, name: null, cwd: null, prof: zeroProf(), tok: zeroTok(), cost: 0, msgs: 0, prompts: 0, sessions: {}, tools: {}, skills: {}, agents: {}, mcps: {}, models: {}, first: 0, last: 0 };
+      p = this.s.projects[key] = { key, name: null, cwd: null, prof: zeroProf(), tok: zeroTok(), cost: 0, msgs: 0, prompts: 0, sessions: {}, tools: {}, skills: {}, agents: {}, mcps: {}, models: {}, files: {}, cmds: {}, turns: [], first: 0, last: 0 };
       this.topologyChanged();
     }
     if (!p.name && cwd) {
@@ -499,6 +538,7 @@ export class Brain {
     }
     const cat = toolCategory(name, input);
     if (cat) p.prof[cat]++;
+    this.trackMap(name, input, p, base);
     const tl = this.s.tools[name] || (this.s.tools[name] = { name, uses: 0, errors: 0, first: 0, last: 0, projects: {} });
     if (!tl.uses) this.topologyChanged();
     tl.uses++; inc(tl.projects, p.key); this.touch(tl, ts);
@@ -523,6 +563,59 @@ export class Brain {
     const ev = { ...base, k: 'tool', m: model, n: name, tgt: target, d: detail, id: b.id };
     if (mem) ev.mem = mem;
     this.emit(ev);
+  }
+
+  /**
+   * Mapa del proyecto: qué ficheros se leen y editan (y en qué petición), qué órdenes se ejecutan
+   * y cuántos pasos se dedican a buscar antes de tocar nada.
+   */
+  trackMap(name, input, p, base) {
+    const turn = this.openTurn.get(base.s);
+    const edit = /^(Edit|Write|MultiEdit|NotebookEdit)$/.test(name);
+    let explore = false;
+    if (name === 'Read' || edit) {
+      const rel = this.relPath(p, String(input.file_path || input.notebook_path || ''));
+      if (rel) {
+        const f = p.files[rel] || (p.files[rel] = { r: 0, e: 0, last: 0 });
+        if (edit) f.e++; else f.r++;
+        if (base.ts > f.last) f.last = base.ts;
+        if (turn) turn.f[rel] = (turn.f[rel] || 0) + (edit ? 3 : 1);
+      }
+      explore = !edit;
+      if (edit && turn) turn.e = true;
+    } else if (name === 'Grep' || name === 'Glob' || name === 'LS') {
+      explore = true;
+    } else if (name === 'Bash') {
+      const cmd = String(input.command || '').replace(/^\s*cd\s+[^&;]+(&&|;)\s*/, '');
+      if (/^\s*(ls|find|grep|rg|cat|head|tail|tree|wc|sed\s+-n|awk)\b/.test(cmd)) explore = true;
+      // ficheros nombrados en la orden (sed -i, scripts, redirecciones…): también cuentan para el mapa
+      const raw = String(input.command || '');
+      const dir = raw.match(/^\s*cd\s+([^\s&;]+)/)?.[1]?.replace(/^~(?=\/|$)/, this.home).replace(/^["']|["']$/g, '');
+      if (!explore) {
+        const k = normCmd(cmd);
+        // la orden se apunta con la subcarpeta donde se ejecutó («sinapsis\tnpm test»)
+        const at = dir && p.cwd ? path.resolve(p.cwd, dir) : null;
+        const relDir = at && at.startsWith(p.cwd + '/') ? at.slice(p.cwd.length + 1) : '';
+        if (k) { const key = relDir ? `${relDir}\t${k}` : k; p.cmds[key] = (p.cmds[key] || 0) + 1; }
+      }
+      for (const tok of pathTokens(raw)) {
+        const abs = path.resolve(dir ? path.resolve(p.cwd || '/', dir) : (p.cwd || '/'), tok.replace(/^~(?=\/)/, this.home));
+        const rel = this.relPath(p, abs);
+        if (!rel || !isFile(abs)) continue; // solo rutas reales: en los scripts aparecen nombres que no son ficheros
+        const ed = new RegExp(`(sed\\s+-i[^|;&\\n]*|>{1,2}\\s*|open\\(['"]?[^'"]*)${tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(raw) || /\.write\(|writeFileSync|open\([^)]*['"]w['"]/.test(raw);
+        const f = p.files[rel] || (p.files[rel] = { r: 0, e: 0, last: 0 });
+        if (ed) f.e++; else f.r++;
+        if (base.ts > f.last) f.last = base.ts;
+        if (turn) { turn.f[rel] = (turn.f[rel] || 0) + (ed ? 2 : 0.5); if (ed) turn.e = true; }
+      }
+    }
+    if (turn) { turn.n++; if (explore && !turn.e) turn.x++; }
+  }
+
+  relPath(p, fp) {
+    if (!fp || !p.cwd || !fp.startsWith(p.cwd + '/')) return null;
+    const rel = fp.slice(p.cwd.length + 1);
+    return /(^|\/)(node_modules|\.git|dist|build)\//.test(rel) ? null : rel;
   }
 
   onUser(d, p, s, base, agentId) {
@@ -556,6 +649,12 @@ export class Brain {
     }
     p.prompts++; s.prompts++; this.s.totals.prompts++;
     s.turnSteps = 0;
+    if (!text.startsWith('/') && !agentId) {
+      const turn = { ts: base.ts, s: s.id, t: clip(text.replace(/\s+/g, ' ').trim(), 110), q: tokenize(text, 40), f: {}, x: 0, n: 0, e: false };
+      (p.turns ||= []).push(turn);
+      if (p.turns.length > TURNS_MAX) p.turns.splice(0, p.turns.length - TURNS_MAX);
+      this.openTurn.set(s.id, turn);
+    }
     if (base.ts) { const dd = this.dayEntry(base.ts); dd.prompts++; inc(dd.byProjectPrompts, p.key); }
     this.edge('input', 'session:' + s.id, base.ts);
     this.emit({ ...base, k: 'prompt', text: clip(text.replace(/\s+/g, ' ').trim(), 140) });
@@ -601,7 +700,7 @@ export class Brain {
     for (const [k, v] of Object.entries(inv.memory)) memory[k] = { key: k, reads: 0, writes: 0, last: 0, ...v };
     for (const [k, v] of Object.entries(s.memory)) memory[k] = { ...(memory[k] || { files: 0 }), ...v };
     const sessions = Object.values(s.sessions).map((x) => ({ ...x, live: this.liveSessions.has(x.id), lastThought: undefined }));
-    const projects = Object.values(s.projects).map((p) => ({ ...p, sessions: Object.keys(p.sessions), live: Object.keys(p.sessions).some((id) => this.liveSessions.has(id)) }));
+    const projects = Object.values(s.projects).map(({ files: _f, turns: _t, cmds: _c, ...p }) => ({ ...p, sessions: Object.keys(p.sessions), live: Object.keys(p.sessions).some((id) => this.liveSessions.has(id)), map: projectMap(s.projects[p.key], { now, files: 8, cmds: 5, tasks: 0 }) }));
     return {
       generatedAt: now,
       totals: s.totals,

@@ -707,3 +707,15 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .steps-ios { margin: 0; padding-left: 22px; display: grid; gap: 12px; font-size: 15px; color: var(--ink2); }
 .steps-ios b { color: var(--ink); }
 .steps-ios svg { width: 18px; height: 18px; vertical-align: -3px; color: var(--memory); }
+
+/* ---------- dónde mirar ---------- */
+.where-exp { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+.where-exp b { color: var(--ink); font-weight: 600; }
+.where-q input { width: 100%; font: inherit; color: var(--ink); background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line2); border-radius: 9px; padding: 8px 10px; outline: none; }
+.where-q input:focus { border-color: color-mix(in srgb, var(--c) 60%, transparent); }
+.where-list { margin-top: 6px; }
+.where-list code { font: 11.5px var(--mono); color: var(--ink2); }
+.where-list .st { font-style: normal; color: var(--c); letter-spacing: -1px; font-size: 9px; }
+.where-cmds { margin-top: 8px; }
+.where-cmds code { font: 11px var(--mono); color: var(--muted); }
+@media (max-width: 900px), (max-height: 520px) and (pointer: coarse) { .where-q input { font-size: 16px; } }
