@@ -6,7 +6,10 @@ import os from 'node:os';
 import { costOf, prettyModel } from './pricing.js';
 import { scanInventory } from './inventory.js';
 
-const CACHE_VERSION = 5;
+const CACHE_VERSION = 6;
+// Umbrales de contexto (tokens que el modelo relee en cada paso) para avisar
+export const CTX_LEVELS = { warn: 100000, high: 200000 };
+const CTX_ALERTS = [200000, 400000, 600000];
 const RECENT_MS = 24 * 3600 * 1000;
 const RECENT_MAX = 12000;
 const TOP_TYPES = new Set(['ai-title', 'custom-title', 'agent-name', 'api-request-shape']);
@@ -46,7 +49,8 @@ function emptyState() {
 }
 
 export class Brain {
-  constructor({ claudeDir = path.join(os.homedir(), '.claude'), cacheFile, onEvent = () => {}, onTopology = () => {} } = {}) {
+  constructor({ claudeDir = path.join(os.homedir(), '.claude'), cacheFile, onEvent = () => {}, onTopology = () => {}, onAlert = () => {} } = {}) {
+    this.onAlert = onAlert;
     this.claudeDir = claudeDir;
     this.root = path.join(claudeDir, 'projects');
     this.cacheFile = cacheFile;
@@ -318,11 +322,13 @@ export class Brain {
         addTok(at.tok, tok); at.cost += cost; at.msgs++; this.touch(at, ts);
       }
       if (ts) {
-        const dk = day(ts);
-        const dd = this.s.daily[dk] || (this.s.daily[dk] = { tok: zeroTok(), cost: 0, msgs: 0, byProject: {}, byModel: {} });
+        const dd = this.dayEntry(ts);
         addTok(dd.tok, tok); dd.cost += cost; dd.msgs++;
         inc(dd.byProject, p.key, cost); inc(dd.byModel, model, cost);
+        if (agentType) dd.agentCost += cost;
+        if (d.effort && !agentType) inc(dd.effort, d.effort);
       }
+      if (!agentType) this.trackContext(s, p, tok, ts);
       this.edge(fromNode, modelNode, ts);
       const ev = { ...base, k: 'thought', m: model, u: [tok.in, tok.cr, tok.cw, tok.out, tok.th], c: cost, e: d.effort || null, td: d.thinkingDurationMs || null, stop: m.stop_reason || null };
       if (!base.a && (!this.s.lastThought || ts >= this.s.lastThought.ts)) {
@@ -338,6 +344,35 @@ export class Brain {
       if (!b || b.type !== 'tool_use' || !b.id) continue;
       if (this.pendingTools.has(b.id)) continue;
       this.onToolUse(b, p, s, model, modelNode, base, agentType);
+    }
+  }
+
+  dayEntry(ts) {
+    const dk = day(ts);
+    const dd = this.s.daily[dk] || (this.s.daily[dk] = { tok: zeroTok(), cost: 0, msgs: 0, byProject: {}, byModel: {} });
+    dd.prompts ??= 0; dd.byProjectPrompts ??= {}; dd.effort ??= {}; dd.agentCost ??= 0;
+    return dd;
+  }
+
+  /** Contexto real que el modelo releyó en este paso del hilo principal (entrada + caché). */
+  trackContext(s, p, tok, ts) {
+    const ctx = tok.in + tok.cr + tok.cw;
+    s.ctx = ctx; s.ctxTs = ts;
+    s.ctxMax = Math.max(s.ctxMax || 0, ctx);
+    s.mainRead = (s.mainRead || 0) + ctx;
+    s.mainMsgs = (s.mainMsgs || 0) + 1;
+    s.turnSteps = (s.turnSteps || 0) + 1;
+    if (ctx < 100000) s.alerted = 0; // tras /compact el contexto baja: se rearman los avisos
+    if (!this.live) return;
+    for (const th of CTX_ALERTS) {
+      if (ctx >= th && (s.alerted || 0) < th) {
+        s.alerted = th;
+        this.onAlert({
+          kind: 'context', ts, s: s.id, p: p.key, ctx, level: th,
+          title: `${p.name || 'Sesión'}: ${Math.round(ctx / 1000)} k de contexto`,
+          body: `«${s.title || 'Sesión sin título'}» relee ${Math.round(ctx / 1000)} k tokens en cada paso. Usa /compact o abre una sesión nueva para la siguiente tarea.`,
+        });
+      }
     }
   }
 
@@ -452,6 +487,8 @@ export class Brain {
       return;
     }
     p.prompts++; s.prompts++; this.s.totals.prompts++;
+    s.turnSteps = 0;
+    if (base.ts) { const dd = this.dayEntry(base.ts); dd.prompts++; inc(dd.byProjectPrompts, p.key); }
     this.edge('input', 'session:' + s.id, base.ts);
     this.emit({ ...base, k: 'prompt', text: clip(text.replace(/\s+/g, ' ').trim(), 140) });
   }

@@ -10,6 +10,8 @@ import crypto from 'node:crypto';
 import QRCode from 'qrcode';
 import { Brain } from './ingest.js';
 import { startDemo } from './demo.js';
+import { weeklyReport } from './report.js';
+import { loadConfig, notify } from './notify.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -60,6 +62,14 @@ const send = (res, type, data) => res.write(`event: ${type}\ndata: ${JSON.string
 const broadcast = (type, data) => { for (const c of clients) send(c, type, data); };
 
 let topoTimer = null;
+let config = loadConfig();
+const alerts = [];
+function raise(alert) {
+  alerts.unshift(alert);
+  if (alerts.length > 30) alerts.length = 30;
+  broadcast('alert', alert);
+  if (!DEMO) notify(config, alert.title, alert.body);
+}
 const brain = new Brain({
   claudeDir: CLAUDE_DIR,
   cacheFile: DEMO ? null : CACHE,
@@ -68,6 +78,7 @@ const brain = new Brain({
     clearTimeout(topoTimer);
     topoTimer = setTimeout(() => broadcast('topology', { at: Date.now() }), 800);
   },
+  onAlert: raise,
 });
 
 function boot() {
@@ -89,6 +100,19 @@ function boot() {
   setInterval(() => { try { brain.scan(); } catch (e) { console.error('scan', e.message); } }, 1200);
   setInterval(() => { if (brain.refreshLiveSessions()) broadcast('topology', { at: Date.now() }); }, 4000);
   setInterval(() => brain.refreshInventory(), 60000);
+  // Informe semanal (por defecto, lunes a las 9:00) y recarga de la configuración
+  setInterval(() => {
+    config = loadConfig();
+    const now = new Date();
+    if (!config.weeklyReport || now.getDay() !== config.weeklyDay || now.getHours() < config.weeklyHour) return;
+    const week = now.toLocaleDateString('sv-SE');
+    if (brain.s.lastReport === week) return;
+    brain.s.lastReport = week; brain.dirty = true;
+    const r = weeklyReport(brain.s, brain.snapshot().lastShape);
+    const pp = r.delta.perPrompt;
+    const trend = pp == null ? '' : ` (${pp > 0 ? '+' : ''}${Math.round(pp * 100)} % por petición)`;
+    raise({ kind: 'weekly', ts: Date.now(), title: 'Tu semana con Claude Code', body: `${r.cur.prompts} peticiones · ≈${r.cur.perPrompt.toFixed(2)} US$ por petición${trend}. ${r.tips[0].title}: ${r.tips[0].text}` });
+  }, 60000);
   setInterval(() => { try { brain.save(); } catch (e) { console.error('save', e.message); } }, 30000);
   const bye = () => { try { brain.save(); } catch { /* nada */ } process.exit(0); };
   process.on('SIGINT', bye);
@@ -136,6 +160,16 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ lan: LAN, urls, qr }));
     });
+    return;
+  }
+  if (p === '/api/report') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(weeklyReport(brain.s, brain.snapshot().lastShape)));
+    return;
+  }
+  if (p === '/api/alerts') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(alerts));
     return;
   }
   if (p === '/api/snapshot') {

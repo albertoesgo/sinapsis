@@ -35,6 +35,10 @@ function stateOf(last) {
   return ['dormida', 'Dormida'];
 }
 
+const CTX = { warn: 100000, high: 200000, max: 600000 };
+const ctxLevel = (c) => (c >= CTX.high ? 'high' : c >= CTX.warn ? 'warn' : 'ok');
+const LIVE_MS = 30 * 60e3;
+
 const CH = [
   { key: 'prompt', label: 'Entrada', color: '#f4f1ea' },
   { key: 'thought', label: 'Razonamiento', color: '#ffcf8a' },
@@ -100,6 +104,8 @@ export class Hud {
       }
       box.classList.add('open');
     };
+    $('#btn-report').onclick = () => this.openReport();
+    $('#report').onclick = (e) => { if (e.target.id === 'report' || e.target.closest('.close')) $('#report').classList.remove('open'); };
     $('#mobile').onclick = (e) => { if (e.target.id === 'mobile' || e.target.closest('.close')) $('#mobile').classList.remove('open'); };
     this.eegCanvas = $('#eeg canvas');
     this.ctx = this.eegCanvas.getContext('2d');
@@ -134,6 +140,15 @@ export class Hud {
       host.appendChild(el);
       this.labels.set(n.id, el);
     }
+    for (const n of nodes.values()) {
+      if (n.type !== 'session') continue;
+      const el = document.createElement('div');
+      el.className = 'lbl ctx';
+      el.innerHTML = '<span></span>';
+      host.appendChild(el);
+      this.labels.set('ctx:' + n.id, el);
+    }
+    this.updateCtxLabels();
     for (const r of REGIONS) {
       const el = document.createElement('div');
       el.className = 'lbl region';
@@ -141,6 +156,83 @@ export class Hud {
       host.appendChild(el);
       this.labels.set('region:' + r.name, el);
     }
+  }
+
+  updateCtxLabels() {
+    const now = Date.now();
+    for (const [id, el] of this.labels) {
+      if (!id.startsWith('ctx:')) continue;
+      const s = this.nodes.get(id.slice(4))?.data;
+      const on = s && s.ctx && (s.live || now - (s.ctxTs || 0) < LIVE_MS);
+      el.dataset.on = on ? '1' : '';
+      if (!on) continue;
+      el.className = 'lbl ctx lvl-' + ctxLevel(s.ctx) + (el.classList.contains('vis') ? ' vis' : '');
+      el.querySelector('span').textContent = tok(s.ctx);
+    }
+  }
+
+  renderLive() {
+    const snap = this.snap;
+    if (!snap) return;
+    const now = Date.now();
+    const pname = (k) => snap.projects.find((p) => p.key === k)?.name || '';
+    const list = snap.sessions.filter((s) => s.ctx && (s.live || now - (s.ctxTs || 0) < LIVE_MS)).sort((a, b) => b.ctx - a.ctx);
+    const tipFor = (s) => {
+      const l = ctxLevel(s.ctx);
+      if (l === 'high') return 'Pesada: /compact o sesión nueva';
+      if (l === 'warn') return 'Creciendo: /compact al terminar la tarea';
+      return 'Ligera';
+    };
+    $('#live-list').innerHTML = list.length ? list.map((s) => {
+      const l = ctxLevel(s.ctx);
+      const w = Math.min(100, (s.ctx / CTX.max) * 100);
+      return `<li class="lvl-${l}" data-id="session:${esc(s.id)}">
+        <div class="top"><b>${esc(s.title || 'Sesión sin título')}</b><small>${esc(pname(s.project))}</small><span class="v">${tok(s.ctx)}</span></div>
+        <div class="gauge"><i style="width:${w.toFixed(1)}%"></i><em style="left:${(CTX.warn / CTX.max) * 100}%"></em><em style="left:${(CTX.high / CTX.max) * 100}%"></em></div>
+        <div class="tip">${tipFor(s)}${s.turnSteps ? ` · ${s.turnSteps} pasos en esta petición` : ''} · ${ago(s.ctxTs)}</div></li>`;
+    }).join('') : '<li class="empty">Ninguna sesión trabajando en los últimos 30 min.</li>';
+    $('#live-list').querySelectorAll('li[data-id]').forEach((li) => { li.onclick = () => this.cb.onFocus(li.dataset.id); });
+    this.updateCtxLabels();
+  }
+
+  onAlert(a) {
+    const el = document.createElement('div');
+    el.className = 'toast ' + (a.kind || '');
+    el.innerHTML = `<b>${esc(a.title)}</b><span>${esc(a.body)}</span>`;
+    el.onclick = () => { el.remove(); if (a.kind === 'weekly') this.openReport(); else if (a.s) this.cb.onFocus('session:' + a.s); };
+    $('#toasts').prepend(el);
+    setTimeout(() => el.remove(), 14000);
+    try { navigator.vibrate?.([80, 60, 80]); } catch { /* sin vibración */ }
+  }
+
+  async openReport() {
+    const box = $('#report');
+    box.classList.add('open');
+    const r = await fetch('/api/report').then((x) => x.json());
+    const pct = (d, invert = false) => {
+      if (d == null) return '<span>sin datos previos</span>';
+      const up = d > 0;
+      const cls = (invert ? !up : up) ? 'up' : 'down';
+      return `<span class="${cls}">${up ? '▲' : '▼'} ${Math.abs(Math.round(d * 100))} %</span> <span>vs semana anterior</span>`;
+    };
+    const f = (ts) => new Date(ts).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+    const effTot = Object.values(r.cur.effort).reduce((a, b) => a + b, 0) || 1;
+    const eff = ['low', 'medium', 'high', 'xhigh', 'max'].filter((e) => r.cur.effort[e]).map((e) => `${e} ${Math.round((r.cur.effort[e] / effTot) * 100)} %`).join(' · ');
+    box.querySelector('.content').innerHTML = `
+      <p class="range">${f(r.from)} – ${f(r.to)} · valores orientativos a precios de la API, no lo que pagas</p>
+      <div class="kpis">
+        <div><small>Peticiones</small><b>${r.cur.prompts}</b>${pct(r.delta.prompts, true)}</div>
+        <div><small>Por petición</small><b>${money(r.cur.perPrompt)}</b>${pct(r.delta.perPrompt)}</div>
+        <div><small>Valor semana</small><b>${money(r.cur.cost)}</b>${pct(r.delta.cost)}</div>
+        <div><small>Leído / escrito</small><b>${Math.round(r.cur.read / Math.max(1, r.cur.out))} : 1</b><span>${tok(r.cur.read)} leídos</span></div>
+      </div>
+      <h3>Qué cambiar</h3>
+      <ul class="tips">${r.tips.map((t) => `<li class="t-${t.level}"><b>${esc(t.title)}</b><span>${esc(t.text)}</span></li>`).join('')}</ul>
+      ${r.sessions.length ? `<h3>Sesiones más pesadas</h3><table><tr><th>Sesión</th><th>Proyecto</th><th class="n">Contexto medio</th><th class="n">Pasos</th><th class="n">Pasos/petición</th></tr>
+        ${r.sessions.map((s) => `<tr><td>${esc(s.title || 'Sin título')}</td><td>${esc(s.project)}</td><td class="n ${s.avgCtx > CTX.high ? 'up' : ''}">${tok(s.avgCtx)}</td><td class="n">${s.steps}</td><td class="n">${Math.round(s.stepsPerPrompt)}</td></tr>`).join('')}</table>` : ''}
+      ${r.projects.length ? `<h3>Por proyecto</h3><table><tr><th>Proyecto</th><th class="n">Peticiones</th><th class="n">Por petición</th><th class="n">Tendencia</th><th class="n">Valor</th></tr>
+        ${r.projects.map((p) => `<tr><td>${esc(p.name)}</td><td class="n">${p.prompts}</td><td class="n">${p.perPrompt != null ? money(p.perPrompt) : '—'}</td><td class="n">${p.trend == null ? '—' : `<span class="${p.trend > 0 ? 'up' : 'down'}">${p.trend > 0 ? '▲' : '▼'} ${Math.abs(Math.round(p.trend * 100))} %</span>`}</td><td class="n">${money(p.cost)}</td></tr>`).join('')}</table>` : ''}
+      ${eff ? `<h3>Esfuerzo usado</h3><p class="muted">${eff}</p>` : ''}`;
   }
 
   render(snap) {
@@ -158,6 +250,7 @@ export class Hud {
     $('#status').innerHTML = `<b>${live}</b> ${live === 1 ? 'sesión viva' : 'sesiones vivas'} · <b>${day24.toLocaleString('es-ES')}</b> impulsos en 24 h`;
     this.renderMetabolism(snap);
     this.renderProjects(snap);
+    this.renderLive();
     this.renderThought(snap.lastThought);
     this.renderInventory();
   }
@@ -220,6 +313,25 @@ export class Hud {
 
   renderProjects(snap) {
     const ps = [...snap.projects].sort((a, b) => b.last - a.last);
+    const week = (offset) => {
+      const acc = {};
+      for (let i = 0; i < 7; i++) {
+        const d = snap.daily[new Date(Date.now() - (i + offset) * 86400e3).toLocaleDateString('sv-SE')];
+        if (!d) continue;
+        for (const [k, c] of Object.entries(d.byProject || {})) (acc[k] ||= { c: 0, n: 0 }).c += c;
+        for (const [k, n] of Object.entries(d.byProjectPrompts || {})) (acc[k] ||= { c: 0, n: 0 }).n += n;
+      }
+      return acc;
+    };
+    const w0 = week(0), w1 = week(7);
+    const ppr = (key) => {
+      const a = w0[key], b = w1[key];
+      if (!a || !a.n) return '';
+      const v = a.c / a.n;
+      let tr = '';
+      if (b && b.n) { const d = (v - b.c / b.n) / (b.c / b.n); tr = ` <span class="${d > 0 ? 'up' : 'down'}">${d > 0 ? '▲' : '▼'}${Math.abs(Math.round(d * 100))} %</span>`; }
+      return `<div class="ppr">≈${money(v)} por petición (7 días)${tr}</div>`;
+    };
     $('#projects').innerHTML = ps.map((p) => {
       const n = this.nodes.get('project:' + p.key);
       const [st] = stateOf(p.last);
@@ -229,7 +341,7 @@ export class Hud {
       return `<li data-id="project:${esc(p.key)}">
         <i class="dot ${p.live ? 'live' : st}" style="--c:${n ? cssColor(n.color) : '#888'}"></i>
         <div class="pname"><b>${esc(p.name || p.key)}</b><small>${p.sessions.length} ses. · ${tok(sumTok(p.tok))} · ${ago(p.last)}</small>
-        <div class="chips">${ag}${sk}${mc}</div></div>
+        ${ppr(p.key)}<div class="chips">${ag}${sk}${mc}</div></div>
         <span class="pcost">${money(p.cost)}</span></li>`;
     }).join('');
     $('#projects').querySelectorAll('li').forEach((li) => { li.onclick = () => this.cb.onFocus(li.dataset.id); });
@@ -292,6 +404,13 @@ export class Hud {
     const ul = $('#feed');
     ul.insertAdjacentHTML('afterbegin', this.feedItem(ev));
     while (ul.children.length > 40) ul.lastElementChild.remove();
+    if (ev.k === 'thought' && !ev.a && !fromReplay && this.snap) {
+      const ss = this.snap.sessions.find((x) => x.id === ev.s);
+      if (ss) { ss.ctx = ev.u[0] + ev.u[1] + ev.u[2]; ss.ctxTs = ev.ts; ss.turnSteps = (ss.turnSteps || 0) + 1; this.renderLive(); }
+    } else if (ev.k === 'prompt' && !fromReplay && this.snap) {
+      const ss = this.snap.sessions.find((x) => x.id === ev.s);
+      if (ss) { ss.turnSteps = 0; this.renderLive(); }
+    }
     if (ev.k === 'thought' && !ev.a && !fromReplay && this.snap) {
       const p = this.snap.projects.find((x) => x.key === ev.p);
       const s = this.snap.sessions.find((x) => x.id === ev.s);
@@ -400,6 +519,7 @@ export class Hud {
       let pos;
       if (id.startsWith('region:')) pos = REGIONS.find((r) => 'region:' + r.name === id).pos;
       else pos = nodes.get(id)?.pos;
+      if (id.startsWith('ctx:')) pos = el.dataset.on ? nodes.get(id.slice(4))?.pos : null;
       if (!pos || !this.showLabels) { el.style.opacity = 0; continue; }
       v.copy(pos).project(camera);
       const x = (v.x * 0.5 + 0.5) * W, y = (-v.y * 0.5 + 0.5) * H;

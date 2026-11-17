@@ -356,6 +356,7 @@ function connect() {
   const es = new EventSource('/events');
   es.addEventListener('pulse', (e) => onPulse(JSON.parse(e.data)));
   es.addEventListener('topology', () => scheduleRefetch(600));
+  es.addEventListener('alert', (e) => hud.onAlert(JSON.parse(e.data)));
   es.onopen = () => hud.setConnection(true);
   es.onerror = () => hud.setConnection(false);
 }
