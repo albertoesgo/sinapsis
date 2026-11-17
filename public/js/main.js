@@ -7,10 +7,14 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { buildBrainCloud, brainMaterial, MAX_WAVES, rng } from './brain.js';
 import { layout, somaMaterial, lineMaterial, buildDendrites, buildAxons, curvePoints, Pulses, TYPE_COLOR } from './neurons.js';
 import { Hud } from './hud.js';
+import { isMobile, isLandscapePhone, STATIC } from './ui.js';
+import * as Static from './static.js';
 
 // ---------- escena ----------
 const canvas = document.getElementById('scene');
-const MOBILE = matchMedia('(max-width: 760px)').matches || matchMedia('(pointer: coarse)').matches;
+// Dispositivos modestos: menos partículas y menos resolución
+const LOW = matchMedia('(pointer: coarse)').matches || window.innerWidth < 760;
+const MOBILE = LOW;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(MOBILE ? 1.5 : 2, window.devicePixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -26,12 +30,12 @@ function homeDistance() {
   const W = window.innerWidth, H = window.innerHeight;
   const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   let free = W;
-  if (W > 760) {
+  if (!isMobile()) {
     const left = document.getElementById('left'), right = document.getElementById('right');
     if (left && right) free = Math.max(320, right.getBoundingClientRect().left - left.getBoundingClientRect().right);
   }
   const dW = (BRAIN.w * W) / (free * 2 * t * (W / H)); // que quepa a lo ancho en el hueco libre
-  const dH = BRAIN.h / (2 * t * (H > 760 ? 0.82 : 0.7)); // y a lo alto, dejando sitio al EEG
+  const dH = BRAIN.h / (2 * t * (isLandscapePhone() ? 0.78 : H > 760 ? 0.82 : 0.66)); // y a lo alto, dejando sitio a la cabecera y al EEG
   return Math.max(dW, dH);
 }
 camera.position.copy(HOME).add(new THREE.Vector3(-17.5, 6.5, 15.5).setLength(homeDistance()));
@@ -42,9 +46,11 @@ const view = { dx: 0, dy: 0, tx: 0, ty: 0 };
 function updateViewOffset() {
   const W = window.innerWidth, H = window.innerHeight;
   const left = document.getElementById('left'), right = document.getElementById('right');
-  if (W <= 760) {
-    view.tx = 0;
-    view.ty = document.body.classList.contains('sheet-open') ? H * 0.27 : 0;
+  if (isMobile()) {
+    const open = document.body.classList.contains('sheet-open');
+    // en horizontal las hojas salen por la derecha: el cerebro se aparta a la izquierda; en vertical, sube
+    if (isLandscapePhone()) { view.tx = open ? W * 0.22 : 0; view.ty = 0; }
+    else { view.tx = 0; view.ty = open ? H * 0.27 : 0; }
     return;
   }
   if (!left || !right) { view.tx = view.ty = 0; return; }
@@ -84,6 +90,7 @@ composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
 // polvo de fondo
+let dustMat = null;
 {
   const r = rng(7);
   const n = 1800, pos = new Float32Array(n * 3), col = new Float32Array(n * 3), sz = new Float32Array(n), gl = new Float32Array(n);
@@ -97,9 +104,15 @@ composer.addPass(new OutputPass());
   g.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
   g.setAttribute('aSize', new THREE.BufferAttribute(sz, 1));
   g.setAttribute('aGlow', new THREE.BufferAttribute(gl, 1));
-  scene.add(new THREE.Points(g, somaMaterial()));
+  dustMat = somaMaterial();
+  scene.add(new THREE.Points(g, dustMat));
 }
 
+/** Las partículas se dimensionan con la resolución real del lienzo (también cuando se ajusta sola). */
+function syncPixelRatio() {
+  const pr = renderer.getPixelRatio();
+  for (const m of [brainMat, somaMat, pulses.points.material, dustMat]) if (m?.uniforms?.uPR) m.uniforms.uPR.value = pr;
+}
 const brainMat = brainMaterial();
 const brainCloud = new THREE.Points(buildBrainCloud(MOBILE ? 0.55 : 1), brainMat);
 scene.add(brainCloud);
@@ -109,6 +122,7 @@ const lineMatD = lineMaterial();
 const lineMatA = lineMaterial();
 const pulses = new Pulses(800);
 scene.add(pulses.points);
+syncPixelRatio();
 
 let state = { snap: null, nodes: new Map(), curves: new Map(), soma: null, dendrites: null, axons: null };
 let waveSlot = 0;
@@ -145,7 +159,7 @@ function rebuild(snap) {
   const ax = buildAxons(nodes, snap.edges, snap.generatedAt);
   const axons = new THREE.LineSegments(ax.geometry, lineMatA);
   scene.add(axons, dendrites, soma);
-  state = { snap, nodes, curves: ax.curves, soma, dendrites, axons, axonGlow: new Map() };
+  state = { snap, nodes, list: [...nodes.values()], glowByIdx: new Float32Array(nodes.size), curves: ax.curves, soma, dendrites, axons, axonGlow: new Map() };
   hud.setNodes(nodes);
 }
 
@@ -203,6 +217,7 @@ function onPulse(ev, { fromReplay = false } = {}) {
   const start = Math.max(0, (busyUntil.get(from) || 0) - now);
   const projColor = state.nodes.get('project:' + ev.p)?.color || WHITE;
   hud.onPulse(ev, fromReplay);
+  if (!fromReplay && recentBuf && state.snap.recent === recentBuf) recentBuf.push(ev);
   ensureNode(ev);
 
   if (ev.k === 'prompt') {
@@ -254,14 +269,24 @@ function scheduleRefetch(ms = 1000) {
 }
 
 // ---------- datos ----------
+let recentBuf = null; // eventos de 24 h: llegan una vez y luego se mantienen aquí con los nuevos
 async function load() {
-  const res = await fetch('/api/snapshot');
-  const snap = await res.json();
+  let snap;
+  if (STATIC) snap = await Static.snapshot();
+  else snap = await fetch(recentBuf ? 'api/snapshot?lite=1' : 'api/snapshot').then((r) => r.json());
+  if (snap.recent) recentBuf = snap.recent;
+  else {
+    const cut = Date.now() - 24 * 3600e3;
+    if (recentBuf.length && recentBuf[0].ts < cut) recentBuf = recentBuf.filter((e) => e.ts >= cut);
+    snap.recent = recentBuf;
+  }
   rebuild(snap);
   hud.render(snap);
 }
+const api = (path) => (STATIC ? Static.api(path) : fetch(path).then((r) => (r.ok ? r.json() : null)));
 
 const hud = new Hud({
+  api: (path) => api(path),
   onFocus: (id) => focusNode(id),
   onReplay: (events) => replay(events),
   onToggleRotate: (v) => { rotateOn = v; if (!focused) controls.autoRotate = v; },
@@ -320,9 +345,17 @@ canvas.addEventListener('pointermove', (e) => { mouse.set(e.clientX, e.clientY);
 canvas.addEventListener('pointerleave', () => mouse.set(-9, -9));
 let downAt = null;
 canvas.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
+let lastTap = { t: 0, x: 0, y: 0 };
 canvas.addEventListener('pointerup', (e) => {
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > (e.pointerType === 'touch' ? 12 : 5)) return;
-  if (e.pointerType !== 'mouse') { mouse.set(e.clientX, e.clientY); pick(36); mouse.set(-9, -9); hud.hover(null); }
+  if (e.pointerType !== 'mouse') {
+    mouse.set(e.clientX, e.clientY); pick(36); mouse.set(-9, -9); hud.hover(null);
+    // doble toque en el vacío: volver a ver el cerebro entero
+    const now = performance.now();
+    const dbl = now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40;
+    lastTap = { t: now, x: e.clientX, y: e.clientY };
+    if (dbl && !hovered) { hud.hideDetail(); goHome(); return; }
+  }
   if (hovered) focusNode(hovered.id);
   else { hud.hideDetail(); if (focused) goHome(); }
 });
@@ -366,7 +399,7 @@ function frame() {
   if (state.soma) {
     const glow = state.soma.geometry.attributes.aGlow;
     const now = Date.now();
-    for (const n of state.nodes.values()) {
+    for (const n of state.list) {
       n.act *= Math.exp(-dt * 1.6);
       let base = 0;
       const last = n.data?.last || 0;
@@ -376,12 +409,11 @@ function frame() {
       if (n.type === 'input') base += 0.15 + 0.1 * Math.sin(t * 1.2);
       n.glow = base + n.act;
       glow.array[n.idx] = n.glow;
+      state.glowByIdx[n.idx] = n.glow;
     }
     glow.needsUpdate = true;
     const dg = state.dendrites.geometry.attributes.aGlow, owner = state.dendrites.geometry.userData.owner;
-    const arr = [...state.nodes.values()];
-    const byIdx = new Float32Array(arr.length);
-    for (const n of arr) byIdx[n.idx] = n.glow;
+    const byIdx = state.glowByIdx;
     for (let i = 0; i < owner.length; i++) dg.array[i] = byIdx[owner[i]];
     dg.needsUpdate = true;
     if (state.axonGlow.size) {
@@ -391,10 +423,27 @@ function frame() {
       ag.needsUpdate = true;
     }
   }
-  if (!MOBILE) pick();
+  if (!LOW) pick();
   hud.frame(camera, state.nodes, t);
   composer.render();
+  adaptQuality(dt);
   requestAnimationFrame(frame);
+}
+
+const perf = { acc: 0, n: 0, checks: 0 };
+function adaptQuality(dt) {
+  if (perf.checks > 6 || document.hidden) return;
+  perf.acc += dt; perf.n++;
+  if (perf.acc < 2.5) return;
+  const fps = perf.n / perf.acc;
+  perf.acc = 0; perf.n = 0; perf.checks++;
+  const pr = renderer.getPixelRatio();
+  if (fps < 40 && pr > 1) {
+    const next = Math.max(1, pr - 0.5);
+    renderer.setPixelRatio(next);
+    composer.setPixelRatio(next);
+    syncPixelRatio();
+  }
 }
 
 window.addEventListener('resize', () => {
@@ -409,9 +458,10 @@ window.addEventListener('resize', () => {
 
 // ---------- tiempo real ----------
 function connect() {
-  const es = new EventSource('/events');
+  if (STATIC) { hud.setConnection(true); Static.play((ev) => onPulse(ev), (a) => hud.onAlert(a)); return; }
+  const es = new EventSource('events');
   es.addEventListener('pulse', (e) => onPulse(JSON.parse(e.data)));
-  es.addEventListener('topology', () => scheduleRefetch(600));
+  es.addEventListener('topology', () => { if (!STATIC) scheduleRefetch(600); });
   es.addEventListener('alert', (e) => hud.onAlert(JSON.parse(e.data)));
   es.onopen = () => hud.setConnection(true);
   es.onerror = () => hud.setConnection(false);
@@ -426,9 +476,9 @@ applyViewOffset(true);
 refit();
 live = liveSet();
 setInterval(() => { live = liveSet(); }, 2000);
-setInterval(() => scheduleRefetch(0), 60000);
+if (!STATIC) setInterval(() => scheduleRefetch(0), 60000);
 const origRender = hud.render.bind(hud);
 hud.render = (snap) => { origRender(snap); live = new Set(snap.liveSessions); };
 connect();
 frame();
-window.__sinapsis = { get state() { return state; }, focusNode, onPulse, camera, controls };
+window.__sinapsis = { get state() { return state; }, focusNode, onPulse, camera, controls, view };

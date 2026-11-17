@@ -27,7 +27,8 @@ const PROMPTS = [
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const R = (a, b) => Math.floor(a + Math.random() * (b - a));
 
-export function startDemo(brain) {
+/** Genera 30 días de historia sintética y devuelve con qué seguir generando actividad. */
+export function buildDemo(brain) {
   const sessions = PROJECTS.map((p) => ({ p, id: randomUUID(), sub: [] }));
   const extra = PROJECTS.slice(0, 3).map((p) => ({ p, id: randomUUID(), sub: [] }));
   const all = [...sessions, ...extra];
@@ -124,6 +125,11 @@ export function startDemo(brain) {
   const titles = ['Modo oscuro', 'Build roto', 'Carrusel otoño', 'Rendimiento home', 'Tests de rutas', 'Informe lluvia', 'Checkout', 'Ideas'];
   all.forEach((s, i) => { if (brain.s.sessions[s.id]) brain.s.sessions[s.id].title = titles[i % titles.length]; });
   brain.liveSessions = new Set(all.slice(0, 3).map((s) => s.id));
+  return { all, turn, pick, R };
+}
+
+export function startDemo(brain) {
+  const { all, turn } = buildDemo(brain);
   brain.live = true;
 
   // Actividad en vivo

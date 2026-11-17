@@ -2,9 +2,15 @@
 
 **El sistema nervioso de Claude Code, en tiempo real.**
 
+[![CI](https://github.com/albertoesgo/sinapsis/actions/workflows/ci.yml/badge.svg)](https://github.com/albertoesgo/sinapsis/actions/workflows/ci.yml) [![Licencia MIT](https://img.shields.io/badge/licencia-MIT-ffcf8a)](LICENSE) ![Node 20+](https://img.shields.io/badge/node-20%2B-6ff0b0) ![Sin frameworks](https://img.shields.io/badge/frontend-three.js%20sin%20frameworks-b993ff)
+
+**[▶ Pruébalo en el navegador](https://albertoesgo.github.io/sinapsis/)**: demo con datos sintéticos, sin instalar nada. En el móvil también funciona.
+
 Un cerebro en 3D que se ilumina con la actividad real de tus sesiones de [Claude Code](https://claude.com/claude-code): cada petición, cada respuesta del modelo, cada herramienta, skill, subagente o conector que se usa viaja como un impulso por los axones del cerebro. Al mismo tiempo es un panel de control con el consumo de tokens y su coste equivalente por proyecto, por modelo y por agente.
 
 ![Sinapsis en modo demostración](docs/sinapsis.png)
+
+> **In English.** Sinapsis is a real-time 3D brain that visualises what [Claude Code](https://claude.com/claude-code) is doing on your machine. It tails the session logs Claude Code already writes, turns every prompt, model response, tool call, skill and sub-agent into an impulse travelling between neurons, and doubles as a usage dashboard: tokens and API-equivalent cost per project and model, context size per session with alerts, a weekly report, and an estimate of how much of your Pro/Max 5-hour and weekly limits you have used, learned from the real limit cut-offs recorded in your history. Everything runs locally (Node + three.js, no frameworks, no build step); nothing leaves your computer. [Live demo](https://albertoesgo.github.io/sinapsis/) with synthetic data.
 
 ## Qué muestra
 
@@ -66,7 +72,7 @@ Todos los datos salen de los registros que Claude Code ya guarda en `~/.claude/p
 
 ## Uso
 
-Requiere Node 18 o posterior.
+Requiere Node 20 o posterior.
 
 ```bash
 git clone https://github.com/albertoesgo/sinapsis.git
@@ -81,6 +87,8 @@ Sin datos propios, o para enseñarlo:
 
 ```bash
 npm run demo         # actividad sintética
+npm test             # pruebas
+npm run build:demo   # demo estática en dist/ (la que se publica en GitHub Pages)
 ```
 
 Opciones: `--port 7420`, `--claude-dir /ruta/a/.claude` (también respeta `CLAUDE_CONFIG_DIR`) y `--demo`.
@@ -115,6 +123,31 @@ npm run service:uninstall
 Crea un LaunchAgent (`~/Library/LaunchAgents/com.sinapsis.server.plist`) con el acceso por wifi activado (`SINAPSIS_LAN=0 npm run service:install` para dejarlo solo en local) y guarda el registro en `~/.sinapsis/sinapsis.log`.
 
 ## Cómo está hecho
+
+```mermaid
+flowchart LR
+  A["~/.claude/projects/**/*.jsonl<br/>(registros de Claude Code)"] -->|lectura incremental<br/>cada 1,2 s| B[ingest.js<br/>agregación y deduplicado]
+  B --> C[plan.js<br/>ventanas de 5 h y semana]
+  B --> D[report.js<br/>informe y ritmo]
+  B -->|Server-Sent Events| E[Navegador]
+  C --> E
+  D --> E
+  E --> F[three.js<br/>cerebro procedural, axones e impulsos]
+  E --> G[Paneles<br/>plan, consumo, sesiones, impulsos]
+```
+
+### Decisiones técnicas
+
+- **Sin frameworks ni compilación.** Node puro en el servidor (`http`, `fs`, `zlib`) y módulos ES en el navegador. Dos dependencias: three.js y un generador de QR.
+- **Lectura incremental.** Cada fichero se lee desde el último byte procesado, así que un historial de cientos de MB se actualiza en milisegundos. La caché en disco evita releerlo al arrancar. Los mensajes se deduplican por id, porque Claude Code escribe una línea por cada bloque de una misma respuesta.
+- **Tiempo real con SSE.** Cada evento nuevo llega al navegador por *Server-Sent Events*. Las instantáneas van comprimidas con gzip, y tras la primera se piden sin el historial de 24 h: de ~600 KB a ~12 KB.
+- **Cerebro procedural.** Unas 110.000 partículas con ruido de Perlin forman hemisferios, surcos, cerebelo y tronco. Las ondas de activación se calculan en el *vertex shader*, el resplandor con *bloom* y los impulsos son curvas de Bézier con estela. Si el dispositivo no llega a 40 fps, la resolución baja sola.
+- **Límites del plan aprendidos de los datos.** Anthropic no publica el tamaño de los límites. Sinapsis lee los cortes reales del historial («You've hit your 5-hour limit · resets …») y mide lo consumido justo antes, en franjas de 10 minutos.
+- **Seguridad.** Solo escucha en `127.0.0.1`. Con `--lan` exige una clave aleatoria (cookie `HttpOnly`). Los nombres de host se validan contra el *DNS rebinding*, y todo el texto se escapa antes de pintarlo.
+- **Responsive y táctil.** Paneles en escritorio; hojas inferiores con gestos (deslizar para cerrar o ampliar, doble toque para centrar) en móvil y tableta; hojas laterales con el móvil en horizontal; alturas en `dvh` para que Safari no corte nada.
+- **Pruebas e integración continua.** `npm test` (con `node:test`, sin dependencias) cubre precios, lectura de registros, cortes del plan y el informe. GitHub Actions las ejecuta en Node 20, 22 y 24 y publica la demo en GitHub Pages.
+
+### Ficheros
 
 - `server/plan.js` reconstruye las ventanas de 5 horas y la semana a partir del consumo en franjas de 10 minutos y de los cortes reales.
 - `server/ingest.js` lee los `.jsonl` de forma incremental (por desplazamiento de bytes), descarta duplicados por id de mensaje y agrega el uso de tokens, el coste, las herramientas, las skills, los subagentes, los conectores y la memoria. Envía cada evento al navegador por *Server-Sent Events*.

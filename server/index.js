@@ -7,6 +7,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import QRCode from 'qrcode';
 import { Brain } from './ingest.js';
 import { startDemo } from './demo.js';
@@ -57,6 +58,28 @@ function lanUrls() {
 const DENIED = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sinapsis</title>
 <body style="background:#030409;color:#ebe7df;font:15px/1.5 -apple-system,sans-serif;display:grid;place-items:center;height:100vh;margin:0;text-align:center;padding:24px">
 <div><h1 style="font:400 30px Georgia,serif">Sinapsis</h1><p style="color:#8a8f9d">Para entrar desde este dispositivo, abre Sinapsis en tu ordenador,<br>pulsa <b>Móvil</b> y escanea el código QR.</p></div>`;
+
+// Protección frente a DNS rebinding: una web maliciosa podría resolver su dominio a 127.0.0.1 y leer
+// la API desde tu navegador. Solo se aceptan nombres de host conocidos.
+function hostAllowed(req) {
+  const host = String(req.headers.host || '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase();
+  if (['localhost', '127.0.0.1', '::1', os.hostname().toLowerCase(), os.hostname().replace(/\.local$/i, '').toLowerCase() + '.local'].includes(host)) return true;
+  if (!LAN) return false;
+  return Object.values(os.networkInterfaces()).flat().some((a) => a && a.address.toLowerCase() === host);
+}
+
+/** JSON comprimido con gzip si el navegador lo acepta (la instantánea pasa de ~600 KB a ~60 KB). */
+function sendJson(req, res, data) {
+  const body = Buffer.from(typeof data === 'string' ? data : JSON.stringify(data));
+  const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', Vary: 'Accept-Encoding' };
+  if (body.length > 1024 && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) {
+    res.writeHead(200, { ...headers, 'Content-Encoding': 'gzip' });
+    res.end(zlib.gzipSync(body, { level: 6 }));
+  } else {
+    res.writeHead(200, headers);
+    res.end(body);
+  }
+}
 
 const clients = new Set();
 const send = (res, type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -109,7 +132,7 @@ function boot() {
     const week = now.toLocaleDateString('sv-SE');
     if (brain.s.lastReport === week) return;
     brain.s.lastReport = week; brain.dirty = true;
-    const r = weeklyReport(brain.s, brain.snapshot().lastShape);
+    const r = weeklyReport(brain.s, brain.snapshot({ recent: false }).lastShape);
     const pp = r.delta.perPrompt;
     const trend = pp == null ? '' : ` (${pp > 0 ? '+' : ''}${Math.round(pp * 100)} % por petición)`;
     raise({ kind: 'weekly', ts: Date.now(), title: 'Tu semana con Claude Code', body: `${r.cur.prompts} peticiones · ≈${r.cur.perPrompt.toFixed(2)} US$ por petición${trend}. ${r.tips[0].title}: ${r.tips[0].text}` });
@@ -151,7 +174,9 @@ function serveFile(res, base, rel) {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
-  const p = decodeURIComponent(url.pathname);
+  let p;
+  try { p = decodeURIComponent(url.pathname); } catch { res.writeHead(400).end(); return; }
+  if (!hostAllowed(req)) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Host no permitido'); return; }
   if (!isLoopback(req)) {
     const k = url.searchParams.get('k');
     if (k && same(k, TOKEN)) {
@@ -172,27 +197,24 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (p === '/api/mobile') {
-    if (!isLoopback(req)) { res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"remote":true}'); return; }
+    if (!isLoopback(req)) { sendJson(req, res, { remote: true }); return; }
     const urls = lanUrls();
     QRCode.toString(urls[0], { type: 'svg', margin: 1, color: { dark: '#030409', light: '#ebe7df' } }).then((qr) => {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-      res.end(JSON.stringify({ lan: LAN, urls, qr }));
+      sendJson(req, res, { lan: LAN, urls, qr });
     });
     return;
   }
   if (p === '/api/report') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify(weeklyReport(brain.s, brain.snapshot().lastShape)));
+    sendJson(req, res, weeklyReport(brain.s, brain.snapshot({ recent: false }).lastShape));
     return;
   }
   if (p === '/api/alerts') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify(alerts));
+    sendJson(req, res, alerts);
     return;
   }
   if (p === '/api/snapshot') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ ...brain.snapshot(), demo: DEMO }));
+    // ?lite=1: sin los eventos de 24 h (el navegador ya los tiene y recibe los nuevos en directo)
+    sendJson(req, res, { ...brain.snapshot({ recent: url.searchParams.get('lite') !== '1' }), demo: DEMO });
     return;
   }
   if (p === '/events') {

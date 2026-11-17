@@ -181,23 +181,20 @@ export class Brain {
   }
 
   scan() {
-    const files = this.listFiles();
-    let rebuild = false;
-    for (const f of files) {
+    // Un solo stat por fichero: si alguno ha encogido (se reescribió), se relee todo desde cero.
+    const sizes = [];
+    for (const f of this.listFiles()) {
       let size;
       try { size = fs.statSync(f).size; } catch { continue; }
-      const off = this.s.offsets[f] || 0;
-      if (size < off) { rebuild = true; break; }
-    }
-    if (rebuild) {
-      this.s = emptyState();
-      this.seen = new Set();
-      return this.scan();
+      if (size < (this.s.offsets[f] || 0)) {
+        this.s = emptyState();
+        this.seen = new Set();
+        return this.scan();
+      }
+      sizes.push([f, size]);
     }
     let changed = false;
-    for (const f of files) {
-      let size;
-      try { size = fs.statSync(f).size; } catch { continue; }
+    for (const [f, size] of sizes) {
       const off = this.s.offsets[f] || 0;
       if (size > off) { this.readFrom(f, off, size); changed = true; }
     }
@@ -589,7 +586,8 @@ export class Brain {
     this.inventory = scanInventory(this.claudeDir, cwds);
   }
 
-  snapshot() {
+  /** Estado agregado para el navegador. Con `{ recent: false }` omite los eventos de 24 h (lo más pesado). */
+  snapshot({ recent = true } = {}) {
     const s = this.s;
     const now = Date.now();
     const inv = this.inventory;
@@ -619,7 +617,8 @@ export class Brain {
       daily: s.daily,
       lastThought: s.lastThought,
       lastShape: Object.values(s.shapes).sort((a, b) => b.ts - a.ts)[0] || null,
-      recent: s.recent.filter((e) => e.ts > now - RECENT_MS).slice(-6000),
+      recent: recent ? s.recent.filter((e) => e.ts > now - RECENT_MS).slice(-6000) : undefined,
+      recentCount: s.recent.filter((e) => e.ts > now - RECENT_MS).length,
       liveSessions: [...this.liveSessions],
       plan: planStatus(s, now),
     };

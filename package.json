@@ -1,21 +1,36 @@
 {
   "name": "sinapsis",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Un cerebro 3D en tiempo real que muestra la actividad real de Claude Code: proyectos, sesiones, modelos, herramientas, skills, subagentes y consumo.",
   "type": "module",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
     "demo": "node server/index.js --demo",
+    "test": "node --test",
+    "build:demo": "node scripts/build-demo.mjs",
     "service:install": "bash scripts/install-service.sh",
     "service:uninstall": "bash scripts/uninstall-service.sh"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "license": "MIT",
   "dependencies": {
     "qrcode": "^1.5.4",
     "three": "^0.170.0"
-  }
+  },
+  "keywords": [
+    "claude-code",
+    "three.js",
+    "dashboard",
+    "visualization",
+    "webgl",
+    "developer-tools"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/albertoesgo/sinapsis"
+  },
+  "homepage": "https://albertoesgo.github.io/sinapsis/"
 }

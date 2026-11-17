@@ -63,8 +63,18 @@ export function weeklyReport(state, lastShape) {
   }
   if (!tips.length) tips.push({ level: 'bien', title: 'Todo en orden', text: 'No hay nada destacable que corregir esta semana.' });
 
+  // Tu ritmo: consumo por día de la semana y hora, últimas 4 semanas (franjas de 10 min)
+  const rhythm = Array.from({ length: 7 }, () => new Array(24).fill(0));
+  for (const [k, c] of Object.entries(state.slots || {})) {
+    const t = Number(k) * 600e3;
+    if (t < now - 28 * 86400e3) continue;
+    const d = new Date(t);
+    rhythm[(d.getDay() + 6) % 7][d.getHours()] += c; // lunes = 0
+  }
+
   return {
     from: wStart, to: now,
+    rhythm,
     cur: { cost: cur.cost, prompts: cur.prompts, read: cur.read, out: cur.out, perPrompt: cur.perPrompt, cache: cur.read ? cur.cr / cur.read : 0, effort: cur.effort, agentCost: cur.agentCost },
     prev: { cost: prev.cost, prompts: prev.prompts, perPrompt: prev.perPrompt },
     delta: { cost: delta(cur.cost, prev.cost), perPrompt: delta(cur.perPrompt, prev.perPrompt), prompts: delta(cur.prompts, prev.prompts) },

@@ -1,6 +1,7 @@
 // Capa de datos: paneles, plan, búsqueda, diálogos, EEG, anatomía del pensamiento, inventario, etiquetas y detalle.
 import * as THREE from 'three';
-import { TYPE_COLOR, TYPE_LABEL, FUNCTIONS } from './neurons.js';
+import { TYPE_LABEL, FUNCTIONS } from './neurons.js';
+import { isMobile } from './ui.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -58,38 +59,55 @@ async function copy(text) {
   return ok;
 }
 
-/** Hojas del móvil: arrastrar hacia abajo desde arriba (o con el contenido ya arriba del todo) cierra. */
+/**
+ * Hojas del móvil. Arrastrar hacia abajo cierra (o, si estaba ampliada, vuelve a media altura);
+ * arrastrar hacia arriba desde el asa la amplía a pantalla completa; tocar el asa alterna.
+ */
 function swipeToClose(el, onClose, scroller = el) {
   if (!el) return;
-  let y0 = null, dy = 0, active = false;
+  const HANDLE = 30;
+  let y0 = null, dy = 0, active = false, fromHandle = false;
   el.addEventListener('touchstart', (e) => {
-    if (!matchMedia('(max-width: 760px)').matches || e.touches.length !== 1) return;
-    const nearTop = e.touches[0].clientY - el.getBoundingClientRect().top < 56;
+    if (!isMobile() || e.touches.length !== 1) return;
+    const top = e.touches[0].clientY - el.getBoundingClientRect().top;
+    fromHandle = top < HANDLE;
+    const nearTop = top < 56;
     if (!nearTop && scroller.scrollTop > 0) return;
-    if (e.target.closest('input, canvas, #feed')) { if (!nearTop) return; }
+    if (!nearTop && e.target.closest('input, canvas, #feed, #feed-filter, #glance, .tabs')) return;
     y0 = e.touches[0].clientY; dy = 0; active = false;
   }, { passive: true });
   el.addEventListener('touchmove', (e) => {
     if (y0 == null) return;
     dy = e.touches[0].clientY - y0;
-    if (!active && dy > 8) active = true;
+    if (!active && (dy > 8 || (fromHandle && dy < -8))) active = true;
     if (!active) { if (dy < -4) y0 = null; return; }
     e.preventDefault();
     el.style.transition = 'none';
-    el.style.transform = `translateY(${Math.max(0, dy)}px)`;
+    el.style.transform = `translateY(${Math.max(dy > 0 ? 0 : -40, dy > 0 ? dy : dy * 0.25)}px)`;
   }, { passive: false });
   el.addEventListener('touchend', () => {
     if (y0 == null) return;
     y0 = null;
-    if (!active) return;
+    if (!active) {
+      if (fromHandle && Math.abs(dy) < 6 && el.classList.contains('sheetable')) el.classList.toggle('expanded');
+      return;
+    }
     el.style.transition = 'transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1)';
-    if (dy > 90) {
+    const expanded = el.classList.contains('expanded');
+    if (dy < -50 && el.classList.contains('sheetable')) {
+      el.classList.add('expanded');
+      el.style.transform = '';
+    } else if (dy > 90 && expanded && dy < 260) {
+      el.classList.remove('expanded');
+      el.style.transform = '';
+    } else if (dy > 90) {
       el.style.transform = 'translateY(100%)';
-      setTimeout(() => { onClose(); el.style.transform = ''; el.style.transition = ''; }, 200);
+      setTimeout(() => { el.classList.remove('expanded'); onClose(); el.style.transform = ''; el.style.transition = ''; }, 200);
+      return;
     } else {
       el.style.transform = '';
-      setTimeout(() => { el.style.transition = ''; }, 260);
     }
+    setTimeout(() => { el.style.transition = ''; }, 260);
   });
 }
 
@@ -179,7 +197,7 @@ export class Hud {
     });
 
     // QR para el móvil (solo desde el propio ordenador)
-    fetch('/api/mobile').then((r) => (r.ok ? r.json() : null)).then((m) => {
+    this.cb.api('api/mobile').then((m) => {
       if (!m || m.remote) { this.remote = !!m?.remote; $('#btn-mobile').remove(); return; }
       this.mobileInfo = m;
     }).catch(() => $('#btn-mobile')?.remove());
@@ -219,11 +237,20 @@ export class Hud {
 
     // móvil: deslizar hacia abajo cierra hojas y diálogos
     const toBrain = () => this.setTab('brain');
+    for (const id of ['left', 'right', 'inventory', 'detail']) $('#' + id).classList.add('sheetable');
     swipeToClose($('#left'), toBrain);
     swipeToClose($('#right'), toBrain);
     swipeToClose($('#inventory'), toBrain);
     swipeToClose($('#detail'), () => { this.hideDetail(); this.cb.onHome?.(); });
     $$('[data-modal]').forEach((m) => { if (m.id !== 'palette') swipeToClose($('article', m), () => this.closeModal(m.id), $('.mbody', m)); });
+
+    // escritorio: sombra al pie de un panel cuando queda contenido por debajo
+    for (const el of [$('#left'), $('#right')]) {
+      const upd = () => el.classList.toggle('more', !isMobile() && el.scrollTop + el.clientHeight < el.scrollHeight - 6);
+      el.addEventListener('scroll', upd, { passive: true });
+      new ResizeObserver(upd).observe(el);
+      this.panelChecks = [...(this.panelChecks || []), upd];
+    }
 
     // el plan y las cuentas atrás se refrescan solos
     setInterval(() => { if (this.snap) { this.renderPlan(); this.renderNow(); } }, 30000);
@@ -271,7 +298,7 @@ export class Hud {
   }
 
   toggleInventory(force) {
-    if (matchMedia('(max-width: 760px)').matches) { this.setTab('inv'); return; }
+    if (isMobile()) { this.setTab('inv'); return; }
     const o = $('#inventory').classList.toggle('open', force);
     $('#inv-toggle').classList.toggle('on', o);
     if (!o && $('#inventory').contains(document.activeElement)) document.activeElement.blur();
@@ -305,6 +332,7 @@ export class Hud {
     setTimeout(() => this.syncSheet(), 0);
     $$('#tabbar button').forEach((x) => x.classList.toggle('on', x.dataset.tab === tab));
     if (tab !== 'brain') this.hideDetail();
+    else $$('.sheetable.expanded').forEach((x) => x.classList.remove('expanded'));
     if (tab === 'inv') this.renderInventory();
     if (tab === 'metab' && this.snap) this.renderMetabolism(this.snap);
   }
@@ -369,6 +397,7 @@ export class Hud {
     this.renderThought(snap.lastThought);
     this.renderInventory();
     if (this.isOpen('palette')) this.renderPalette();
+    requestAnimationFrame(() => this.panelChecks?.forEach((f) => f()));
   }
 
   // ================= tu plan =================
@@ -467,7 +496,7 @@ export class Hud {
       const it = items[+li.dataset.i];
       li.onclick = () => {
         if (it.id) this.cb.onFocus(it.id);
-        else if (it.card) { const c = $(`.card[data-card="${it.card}"]`); c.classList.remove('folded'); if (matchMedia('(max-width: 760px)').matches) this.setTab('metab'); c.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+        else if (it.card) { const c = $(`.card[data-card="${it.card}"]`); c.classList.remove('folded'); if (isMobile()) this.setTab('metab'); c.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
       };
     });
   }
@@ -546,14 +575,15 @@ export class Hud {
     };
     $('#toasts').prepend(el);
     setTimeout(() => el.remove(), 14000);
-    try { navigator.vibrate?.([80, 60, 80]); } catch { /* sin vibración */ }
+    try { if (navigator.userActivation?.hasBeenActive) navigator.vibrate?.([80, 60, 80]); } catch { /* sin vibración */ }
   }
 
   // ================= informe =================
   async openReport() {
     const box = $('#report');
     this.openModal('report');
-    const r = await fetch('/api/report').then((x) => x.json());
+    const r = await this.cb.api('api/report');
+    if (!r) return;
     const snap = this.snap;
     const pct = (d, invert = false) => {
       if (d == null) return '<span>sin datos previos</span>';
@@ -597,6 +627,7 @@ export class Hud {
         <div><h3>Por día</h3><div class="week">${week}</div></div>
         <div><h3>Límites del plan</h3>${hitsHtml}</div>
       </div>
+      ${this.rhythmHtml(r.rhythm)}
       <h3>Qué cambiar</h3>
       <ul class="tips">${r.tips.map((t) => `<li class="t-${t.level}"><b>${esc(t.title)}</b><span>${esc(t.text)}</span></li>`).join('')}</ul>
       ${r.sessions.length ? `<h3>Sesiones más pesadas</h3><table><tr><th>Sesión</th><th>Proyecto</th><th class="n">Contexto medio</th><th class="n">Pasos</th><th class="n">Pasos/petición</th></tr>
@@ -605,6 +636,27 @@ export class Hud {
         ${r.projects.map((p) => `<tr class="click" data-id="project:${esc(p.key)}"><td>${esc(p.name)}</td><td class="n">${p.prompts}</td><td class="n">${p.perPrompt != null ? money(p.perPrompt) : '—'}</td><td class="n">${p.trend == null ? '—' : `<span class="${p.trend > 0 ? 'up' : 'down'}">${p.trend > 0 ? '▲' : '▼'} ${Math.abs(Math.round(p.trend * 100))} %</span>`}</td><td class="n">${money(p.cost)}</td></tr>`).join('')}</table>` : ''}
       ${eff ? `<h3>Esfuerzo usado</h3><p class="muted">${eff}</p>` : ''}`;
     $$('tr.click', box).forEach((tr) => { tr.onclick = () => { this.closeModal('report'); this.cb.onFocus(tr.dataset.id); }; });
+  }
+
+  /** Mapa de calor: consumo por día de la semana y hora (últimas 4 semanas). */
+  rhythmHtml(rh) {
+    if (!rh) return '';
+    const flat = rh.flat();
+    const max = Math.max(...flat);
+    if (!max) return '';
+    const DAYS = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'];
+    const LONG = ['los lunes', 'los martes', 'los miércoles', 'los jueves', 'los viernes', 'los sábados', 'los domingos'];
+    const iMax = flat.indexOf(max);
+    const byHour = Array.from({ length: 24 }, (_, h) => rh.reduce((a, row) => a + row[h], 0));
+    const byDay = rh.map((row) => row.reduce((a, b) => a + b, 0));
+    const hPeak = byHour.indexOf(Math.max(...byHour));
+    const dPeak = byDay.indexOf(Math.max(...byDay));
+    const night = byHour.slice(0, 7).reduce((a, b) => a + b, 0) / Math.max(1e-9, byHour.reduce((a, b) => a + b, 0));
+    const cells = rh.map((row, d) => `<span class="d">${DAYS[d]}</span>` + row.map((v, h) => `<i style="--a:${v ? (0.12 + 0.88 * Math.sqrt(v / max)).toFixed(2) : 0}" title="${DAYS[d]} ${h}:00 · ${money(v)}"></i>`).join('')).join('');
+    const hours = '<span></span>' + Array.from({ length: 24 }, (_, h) => `<span class="h">${h % 6 === 0 ? h : ''}</span>`).join('');
+    return `<h3>Tu ritmo · últimas 4 semanas</h3>
+      <p class="muted rh-sum">Trabajas sobre todo <b>${LONG[dPeak]}</b>, con el pico hacia las <b>${hPeak}:00</b>. El momento más intenso: ${DAYS[Math.floor(iMax / 24)]} a las ${iMax % 24}:00.${night > 0.15 ? ` Un ${Math.round(night * 100)} % del consumo es de madrugada (0–7 h).` : ''}</p>
+      <div class="rhythm">${cells}${hours}</div>`;
   }
 
   // ================= consumo =================
@@ -1227,7 +1279,7 @@ export class Hud {
     el.scrollTop = 0;
     el.classList.add('open');
     this.syncSheet();
-    if (matchMedia('(max-width: 760px)').matches && document.body.dataset.tab !== 'brain') this.setTab('brain');
+    if (isMobile() && document.body.dataset.tab !== 'brain') this.setTab('brain');
   }
 
   hideDetail() { $('#detail').classList.remove('open'); this.syncSheet(); }
