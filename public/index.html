@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sinapsis · el sistema nervioso de Claude Code</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='5' fill='%23ffcf8a'/><circle cx='16' cy='16' r='11' fill='none' stroke='%236fd3ff' stroke-width='1.5' opacity='.6'/></svg>" />
+  <link rel="stylesheet" href="/style.css" />
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <div id="labels"></div>
+
+  <header id="brand">
+    <h1>Sinapsis <i id="conn" class="off"></i> <em id="demo-badge" hidden>demo</em></h1>
+    <p>El sistema nervioso de Claude Code, en tiempo real</p>
+    <p id="status" class="status">Conectando…</p>
+  </header>
+
+  <nav id="controls">
+    <button id="btn-replay" title="Reproduce la actividad real de las últimas 24 horas, acelerada"><svg viewBox="0 0 16 16"><path d="M4 3l9 5-9 5z"/></svg><span>Reproducir 24 h</span></button>
+    <button id="btn-rotate" class="on" title="Rotación automática"><svg viewBox="0 0 16 16"><path d="M8 2a6 6 0 1 0 6 6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M14 2v4h-4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button>
+    <button id="btn-labels" class="on" title="Etiquetas"><svg viewBox="0 0 16 16"><path d="M2 4h12M2 8h8M2 12h10" stroke="currentColor" stroke-width="1.4"/></svg></button>
+    <button id="inv-toggle" title="Skills, agentes, herramientas, conectores y memoria: en uso o dormidos"><span>Inventario</span></button>
+    <button id="btn-info" title="Qué es real y qué no"><span>¿Qué es real?</span></button>
+  </nav>
+
+  <div id="replay" hidden><span>Reproduciendo</span><b></b><div class="prog"><i></i></div></div>
+
+  <aside id="left" class="panel">
+    <button class="collapse" title="Plegar">–</button>
+    <section id="metab">
+      <h2>Metabolismo</h2>
+      <div class="big"><b id="m-today">—</b><span id="m-today-tok"></span></div>
+      <small class="note">coste equivalente en precios de la API</small>
+      <div id="m-grid" class="grid3"></div>
+      <div class="days"><canvas id="m-days"></canvas><small id="m-days-max"></small><small class="lbl30">últimos 30 días</small></div>
+      <div id="m-cache" class="cache"></div>
+      <h3>Modelos</h3>
+      <div id="m-models"></div>
+    </section>
+    <section>
+      <h2>Proyectos</h2>
+      <ul id="projects"></ul>
+    </section>
+  </aside>
+
+  <aside id="right" class="panel">
+    <button class="collapse" title="Plegar">–</button>
+    <section id="thought">
+      <h2>Anatomía del último pensamiento</h2>
+      <div class="body"></div>
+    </section>
+    <section id="impulses">
+      <h2>Impulsos</h2>
+      <ul id="feed"></ul>
+    </section>
+  </aside>
+
+  <footer id="eeg">
+    <div class="legend"></div>
+    <canvas></canvas>
+    <small class="span">últimos 3 min · cada pico es un evento real</small>
+  </footer>
+
+  <aside id="inventory" class="panel">
+    <div class="tabs">
+      <button data-tab="skills" class="on">Skills</button>
+      <button data-tab="agents">Agentes</button>
+      <button data-tab="tools">Herramientas</button>
+      <button data-tab="mcps">Conectores</button>
+      <button data-tab="memory">Memoria</button>
+    </div>
+    <p id="inv-summary"></p>
+    <ul id="inv-list"></ul>
+  </aside>
+
+  <aside id="detail" class="panel"><button class="close" title="Cerrar">×</button><div class="content"></div></aside>
+  <div id="tip"></div>
+
+  <div id="info">
+    <article>
+      <button class="close">×</button>
+      <h2>Qué es real (y qué no)</h2>
+      <p>Todo lo que ves sale de los registros locales que Claude Code guarda en <code>~/.claude</code>. Nada se inventa y nada sale de tu ordenador.</p>
+      <dl>
+        <dt>Neuronas</dt><dd>Cada una es algo que existe de verdad: un proyecto, una sesión, un modelo, una herramienta, una skill, un tipo de subagente, un conector o una memoria. Su tamaño depende del uso o el coste reales.</dd>
+        <dt>Axones</dt><dd>Solo hay una conexión si de verdad ha pasado algo entre esos dos puntos (por ejemplo, que Opus haya llamado a <i>Bash</i>). Brilla más cuantas más veces se ha usado.</dd>
+        <dt>Impulsos</dt><dd>Cada destello es un evento real, en el orden en que ocurrió: tu mensaje, la respuesta del modelo, la herramienta que eligió, el resultado o un subagente que se lanza.</dd>
+        <dt>Chispas doradas</dt><dd>Al pensar, el modelo lanza una chispa por cada ~120 <i>tokens de razonamiento</i> reales de ese paso.</dd>
+        <dt>Anatomía del pensamiento</dt><dd>Muestra los tokens reales que leyó y produjo el modelo, y cuánto vino de la caché. El reparto entre instrucciones del sistema y definiciones de herramientas (≈) se estima a partir del tamaño en caracteres de la petición real.</dd>
+        <dt>Coste</dt><dd>Lo que costaría a precios públicos de la API. Con una suscripción no pagas esto, pero sirve para comparar el consumo.</dd>
+      </dl>
+      <h3>Lo que no se puede ver</h3>
+      <p>Las activaciones internas del modelo (sus neuronas artificiales, capas y atención) se calculan en los servidores de Anthropic y no salen de allí. Ningún programa local puede mostrarlas. Por eso aquí el cerebro representa <b>el sistema nervioso de tu Claude Code</b>, no la red neuronal por dentro. La anatomía es una metáfora; los datos no.</p>
+    </article>
+  </div>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

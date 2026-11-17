@@ -1,0 +1,98 @@
+#!/usr/bin/env node
+// Sinapsis · servidor local. Solo escucha en 127.0.0.1: tus datos nunca salen del ordenador.
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { Brain } from './ingest.js';
+import { startDemo } from './demo.js';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const args = process.argv.slice(2);
+const flag = (name, def) => {
+  const i = args.indexOf('--' + name);
+  if (i === -1) return def;
+  const v = args[i + 1];
+  return v && !v.startsWith('--') ? v : true;
+};
+const DEMO = !!flag('demo', false);
+const PORT = Number(flag('port', process.env.SINAPSIS_PORT || 7420));
+const HOST = flag('host', '127.0.0.1');
+const CLAUDE_DIR = flag('claude-dir', process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'));
+const CACHE = path.join(os.homedir(), '.sinapsis', 'state.json');
+
+const clients = new Set();
+const send = (res, type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+const broadcast = (type, data) => { for (const c of clients) send(c, type, data); };
+
+let topoTimer = null;
+const brain = new Brain({
+  claudeDir: CLAUDE_DIR,
+  cacheFile: DEMO ? null : CACHE,
+  onEvent: (ev) => broadcast('pulse', ev),
+  onTopology: () => {
+    clearTimeout(topoTimer);
+    topoTimer = setTimeout(() => broadcast('topology', { at: Date.now() }), 800);
+  },
+});
+
+function boot() {
+  const t = Date.now();
+  if (DEMO) {
+    startDemo(brain);
+    console.log('· Modo demostración (datos sintéticos)');
+    return;
+  }
+  const cached = brain.load();
+  brain.scan();
+  brain.refreshInventory();
+  brain.refreshLiveSessions();
+  brain.save();
+  console.log(`· Historial ${cached ? 'actualizado desde caché' : 'leído desde cero'} en ${Date.now() - t} ms · ${Object.keys(brain.s.sessions).length} sesiones · ${Object.keys(brain.s.projects).length} proyectos`);
+  brain.live = true;
+
+  // Lectura incremental: cada 1,2 s mira qué ficheros han crecido y procesa solo lo nuevo.
+  setInterval(() => { try { brain.scan(); } catch (e) { console.error('scan', e.message); } }, 1200);
+  setInterval(() => { if (brain.refreshLiveSessions()) broadcast('topology', { at: Date.now() }); }, 4000);
+  setInterval(() => brain.refreshInventory(), 60000);
+  setInterval(() => { try { brain.save(); } catch (e) { console.error('save', e.message); } }, 30000);
+  const bye = () => { try { brain.save(); } catch { /* nada */ } process.exit(0); };
+  process.on('SIGINT', bye);
+  process.on('SIGTERM', bye);
+}
+
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
+
+function serveFile(res, base, rel) {
+  const file = path.resolve(base, '.' + path.posix.normalize('/' + rel));
+  if (!file.startsWith(base + path.sep)) { res.writeHead(403).end(); return; }
+  fs.readFile(file, (err, buf) => {
+    if (err) { res.writeHead(404).end('No encontrado'); return; }
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    res.end(buf);
+  });
+}
+
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url, 'http://x');
+  const p = decodeURIComponent(url.pathname);
+  if (p === '/api/snapshot') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ ...brain.snapshot(), demo: DEMO }));
+    return;
+  }
+  if (p === '/events') {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.write('retry: 2000\n\n');
+    clients.add(res);
+    const hb = setInterval(() => res.write(': latido\n\n'), 15000);
+    req.on('close', () => { clearInterval(hb); clients.delete(res); });
+    return;
+  }
+  if (p.startsWith('/vendor/three/')) return serveFile(res, path.join(ROOT, 'node_modules', 'three'), p.slice('/vendor/three/'.length));
+  return serveFile(res, path.join(ROOT, 'public'), p === '/' ? 'index.html' : p.slice(1));
+});
+
+boot();
+server.listen(PORT, HOST, () => console.log(`· Sinapsis en http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`));
