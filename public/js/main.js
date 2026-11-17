@@ -19,17 +19,43 @@ renderer.setClearColor(0x030409, 1);
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x030409, 0.012);
 const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 400);
-camera.position.set(-17.5, 6.5, 15.5);
-// en vertical el cerebro necesita más distancia para caber
-function fitCamera() {
-  const a = window.innerWidth / window.innerHeight;
-  const k = a < 1 ? 1 + (1 - a) * 1.0 : 1;
-  camera.position.setLength(24.5 * k);
+// Centro del cerebro (incluido el tronco) y distancia a la que cabe entero
+const HOME = new THREE.Vector3(0, -0.7, -0.7);
+const BRAIN = { w: 15.5, h: 15 }; // tamaño aparente del cerebro con margen (unidades de escena)
+function homeDistance() {
+  const W = window.innerWidth, H = window.innerHeight;
+  const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  let free = W;
+  if (W > 760) {
+    const left = document.getElementById('left'), right = document.getElementById('right');
+    if (left && right) free = Math.max(320, right.getBoundingClientRect().left - left.getBoundingClientRect().right);
+  }
+  const dW = (BRAIN.w * W) / (free * 2 * t * (W / H)); // que quepa a lo ancho en el hueco libre
+  const dH = BRAIN.h / (2 * t * (H > 760 ? 0.82 : 0.7)); // y a lo alto, dejando sitio al EEG
+  return Math.max(dW, dH);
 }
-fitCamera();
+camera.position.copy(HOME).add(new THREE.Vector3(-17.5, 6.5, 15.5).setLength(homeDistance()));
+
+// En escritorio, centra el cerebro en el hueco libre entre los paneles, no en el centro de la ventana
+function updateViewOffset() {
+  const W = window.innerWidth, H = window.innerHeight;
+  const left = document.getElementById('left'), right = document.getElementById('right');
+  if (W <= 760 || !left || !right) { camera.clearViewOffset(); return; }
+  const L = left.getBoundingClientRect().right;
+  const R = right.getBoundingClientRect().left;
+  const dx = (L + R) / 2 - W / 2;
+  camera.setViewOffset(W, H, -dx, 0, W, H);
+}
+
+/** Recoloca la cámara a la distancia justa, sin cambiar el ángulo de vista. */
+function refit() {
+  const dir = camera.position.clone().sub(HOME);
+  if (dir.lengthSq() < 1e-6) dir.set(-17.5, 6.5, 15.5);
+  camera.position.copy(HOME).add(dir.setLength(homeDistance()));
+}
 
 const controls = new OrbitControls(camera, canvas);
-controls.target.set(0, -0.9, -0.8);
+controls.target.copy(HOME);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
 controls.autoRotate = true;
@@ -224,7 +250,9 @@ async function load() {
 const hud = new Hud({
   onFocus: (id) => focusNode(id),
   onReplay: (events) => replay(events),
-  onToggleRotate: (v) => { controls.autoRotate = v; },
+  onToggleRotate: (v) => { rotateOn = v; if (!focused) controls.autoRotate = v; },
+  onHome: () => goHome(),
+  onLayout: () => updateViewOffset(),
   onBloom: (v) => { bloom.strength = v; },
 });
 
@@ -248,7 +276,18 @@ function replay(events) {
 
 // ---------- enfoque e interacción ----------
 let focusAnim = null;
+let focused = false;
+let rotateOn = true;
+/** Vuelve a encuadrar el cerebro entero, manteniendo el ángulo de vista actual. */
+function goHome() {
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  focusAnim = { t: 0, from: controls.target.clone(), to: HOME.clone(), camFrom: camera.position.clone(), camTo: HOME.clone().addScaledVector(dir, homeDistance()) };
+  focused = false;
+  controls.autoRotate = rotateOn;
+}
 function focusNode(id) {
+  focused = true;
+  controls.autoRotate = false;
   const n = state.nodes.get(id);
   if (!n) return;
   const from = controls.target.clone();
@@ -271,7 +310,7 @@ canvas.addEventListener('pointerup', (e) => {
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > (e.pointerType === 'touch' ? 12 : 5)) return;
   if (e.pointerType !== 'mouse') { mouse.set(e.clientX, e.clientY); pick(36); mouse.set(-9, -9); hud.hover(null); }
   if (hovered) focusNode(hovered.id);
-  else hud.hideDetail();
+  else { hud.hideDetail(); if (focused) goHome(); }
 });
 
 const v = new THREE.Vector3();
@@ -346,7 +385,8 @@ function frame() {
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
-  if (!focusAnim) fitCamera();
+  updateViewOffset();
+  if (!focused && !focusAnim) { controls.target.copy(HOME); refit(); }
   renderer.setSize(window.innerWidth, window.innerHeight);
   composer.setSize(window.innerWidth, window.innerHeight);
 });
@@ -361,7 +401,11 @@ function connect() {
   es.onerror = () => hud.setConnection(false);
 }
 
+canvas.addEventListener('dblclick', () => { hud.hideDetail(); goHome(); });
+updateViewOffset();
 await load();
+updateViewOffset();
+refit();
 live = liveSet();
 setInterval(() => { live = liveSet(); }, 2000);
 setInterval(() => scheduleRefetch(0), 60000);

@@ -1,6 +1,6 @@
 // Capa de datos: paneles, EEG, anatomía del pensamiento, inventario, etiquetas y detalle.
 import * as THREE from 'three';
-import { TYPE_COLOR, TYPE_LABEL } from './neurons.js';
+import { TYPE_COLOR, TYPE_LABEL, FUNCTIONS } from './neurons.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -69,7 +69,8 @@ export class Hud {
     $('#btn-labels').onclick = (e) => { this.showLabels = e.currentTarget.classList.toggle('on'); };
     $('#btn-info').onclick = () => $('#info').classList.add('open');
     $('#info').onclick = (e) => { if (e.target.id === 'info' || e.target.closest('.close')) $('#info').classList.remove('open'); };
-    $('#detail .close').onclick = () => this.hideDetail();
+    $('#detail .close').onclick = () => { this.hideDetail(); this.cb.onHome?.(); };
+    $('#btn-home').onclick = () => { this.hideDetail(); this.cb.onHome?.(); };
     document.querySelectorAll('#inventory .tabs button').forEach((b) => {
       b.onclick = () => {
         document.querySelectorAll('#inventory .tabs button').forEach((x) => x.classList.toggle('on', x === b));
@@ -78,7 +79,7 @@ export class Hud {
       };
     });
     $('#inv-toggle').onclick = (e) => { const o = $('#inventory').classList.toggle('open'); e.currentTarget.classList.toggle('on', o); };
-    document.querySelectorAll('.panel .collapse').forEach((b) => { b.onclick = () => b.closest('.panel').classList.toggle('min'); });
+    document.querySelectorAll('.panel .collapse').forEach((b) => { b.onclick = () => { b.closest('.panel').classList.toggle('min'); this.cb.onLayout?.(); }; });
     this.invTab = 'skills';
     // barra inferior (móvil)
     document.body.dataset.tab = 'brain';
@@ -563,7 +564,12 @@ export class Hud {
     const [, stl] = stateOf(d.last);
     const kv = (k, v) => `<div class="kv"><span>${k}</span><b>${v}</b></div>`;
     let body = '';
-    if (n.type === 'project') body = kv('Coste estimado', money(d.cost)) + kv('Tokens', tok(sumTok(d.tok))) + kv('Sesiones', d.sessions.length) + kv('Peticiones', d.prompts) + kv('Respuestas del modelo', d.msgs.toLocaleString('es-ES'));
+    if (n.type === 'project' && n.prof) {
+      const f = FUNCTIONS[n.prof.main];
+      body += `<div class="zone"><b>${f.lobe}</b><span>Aquí porque destaca en «${f.name.toLowerCase()}»: ${Math.round(n.prof.share[n.prof.main] * 100)} % de su actividad frente al ${Math.round(n.prof.gshare[n.prof.main] * 100)} % de media. Esta zona se encarga de ${f.why}.</span></div>`;
+      if (!short) body += '<div class="prof">' + Object.entries(FUNCTIONS).map(([k, F]) => `<div><span>${F.name}</span><i><em style="width:${Math.round(n.prof.share[k] * 100)}%"></em><u style="left:${Math.round(n.prof.gshare[k] * 100)}%"></u></i><b>${Math.round(n.prof.share[k] * 100)} %</b></div>`).join('') + '<small>la marca blanca es la media de todos tus proyectos</small></div>';
+    }
+    if (n.type === 'project') body += kv('Valor orientativo', money(d.cost)) + kv('Tokens', tok(sumTok(d.tok))) + kv('Sesiones', d.sessions.length) + kv('Peticiones', d.prompts) + kv('Respuestas del modelo', d.msgs.toLocaleString('es-ES'));
     if (n.type === 'session') body = kv('Coste estimado', money(d.cost)) + kv('Tokens', tok(sumTok(d.tok))) + kv('Peticiones', d.prompts) + kv('Subagentes', d.subagents) + kv('Modelos', Object.keys(d.models).map(prettyM).join(', '));
     if (n.type === 'model') body = kv('Coste estimado', money(d.cost)) + kv('Respuestas', d.msgs.toLocaleString('es-ES')) + kv('Leídos', tok(d.tok.in + d.tok.cr + d.tok.cw)) + kv('Generados', tok(d.tok.out)) + kv('Razonamiento', tok(d.tok.th));
     if (n.type === 'tool') body = kv('Usos', d.uses.toLocaleString('es-ES')) + kv('Errores', d.errors) + kv('Proyectos', Object.keys(d.projects).length);
@@ -573,7 +579,8 @@ export class Hud {
     if (n.type === 'memory') body = kv('Ficheros', d.files || 0) + kv('Lecturas', d.reads || 0) + kv('Escrituras', d.writes || 0);
     if (n.type === 'input') body = kv('Peticiones totales', d.prompts) + kv('Origen', 'tus mensajes');
     const desc = !short && d.description ? `<p class="desc">${esc(d.description)}</p>` : '';
-    return `<small class="type">${TYPE_LABEL[n.type] || n.type}${REGION_OF[n.type] ? ' · ' + REGION_OF[n.type] : ''}</small><h4>${esc(n.label)}</h4>${body}${d.last ? kv('Última actividad', `${stl} · ${ago(d.last)}`) : ''}${desc}`;
+    const region = n.type === 'project' && n.prof ? FUNCTIONS[n.prof.main].lobe.toLowerCase() : REGION_OF[n.type];
+    return `<small class="type">${TYPE_LABEL[n.type] || n.type}${region ? ' · ' + region : ''}</small><h4>${esc(n.label)}</h4>${body}${d.last ? kv('Última actividad', `${stl} · ${ago(d.last)}`) : ''}${desc}`;
   }
 
   showDetail(n, snap) {
@@ -625,13 +632,17 @@ function prettyM(m = '') {
   return f ? f[0].toUpperCase() + f.slice(1) + (v.length ? ' ' + v.join('.') : '') : m;
 }
 
-const REGION_OF = { project: 'corteza', session: 'corteza', model: 'tálamo', tool: 'corteza motora', skill: 'cerebelo', agent: 'giro cingulado', mcp: 'lóbulo temporal', memory: 'hipocampo', input: 'tronco encefálico' };
+const REGION_OF = { session: 'corteza', model: 'tálamo', tool: 'corteza motora', skill: 'cerebelo', agent: 'giro cingulado', mcp: 'lóbulo parietal', memory: 'hipocampo', input: 'tronco encefálico' };
 const REGIONS = [
-  { name: 'Corteza motora', sub: 'herramientas', pos: new THREE.Vector3(0, 5.6, 0.6) },
+  { name: 'Corteza prefrontal', sub: 'proyectos que planifican', pos: new THREE.Vector3(0, 3.6, 6.9) },
+  { name: 'Corteza premotora', sub: 'proyectos que ejecutan', pos: new THREE.Vector3(4.4, 5.1, 3.2) },
+  { name: 'Corteza motora', sub: 'herramientas', pos: new THREE.Vector3(0, 6.0, 0.6) },
+  { name: 'Lóbulo temporal izq.', sub: 'proyectos de lenguaje', pos: new THREE.Vector3(-6.6, -2.4, 0.4) },
+  { name: 'Lóbulo occipital', sub: 'proyectos visuales', pos: new THREE.Vector3(0, 1.6, -7.6) },
+  { name: 'Lóbulo parietal', sub: 'conectores', pos: new THREE.Vector3(0, 5.2, -3.6) },
   { name: 'Cerebelo', sub: 'skills', pos: new THREE.Vector3(0, -4.4, -5.6) },
   { name: 'Tálamo', sub: 'modelos', pos: new THREE.Vector3(0, 0.2, 0.2) },
-  { name: 'Lóbulo temporal', sub: 'conectores', pos: new THREE.Vector3(-5.7, -2.6, 1.2) },
-  { name: 'Giro cingulado', sub: 'subagentes', pos: new THREE.Vector3(0, 3.9, -2.6) },
+  { name: 'Giro cingulado', sub: 'subagentes', pos: new THREE.Vector3(0, 3.6, -1.2) },
   { name: 'Hipocampo', sub: 'memoria', pos: new THREE.Vector3(2.6, -2.3, -0.4) },
   { name: 'Tronco encefálico', sub: 'tus peticiones', pos: new THREE.Vector3(0, -7.7, -2.5) },
 ];

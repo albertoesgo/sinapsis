@@ -108,7 +108,7 @@ export function buildBrainCloud(scale = 1) {
   for (const h of [-1, 1]) {
     const c = hemiCenter(h);
     let n = 0;
-    while (n < 46000 * scale) {
+    while (n < 56000 * scale) {
       const d = randomDir(r);
       const p = cortexBase(h, d, tmp).clone();
       const nrm = p.clone().sub(c).normalize();
@@ -130,7 +130,7 @@ export function buildBrainCloud(scale = 1) {
       let lc = cz > 0 ? [0.42, 0.6, 1.0] : [0.62, 0.5, 1.0];
       if (d.z < -0.55) lc = [0.38, 0.72, 0.9];
       if (d.y < -0.05 && d.x * h > 0.3 && d.z > -0.5) lc = [0.5, 0.68, 0.86];
-      push(p, [lc[0] * b * 0.85, lc[1] * b * 0.85, lc[2] * b * 0.85], 0.65 + r() * 0.75);
+      push(p, [lc[0] * b * 0.85, lc[1] * b * 0.85, lc[2] * b * 0.85], 0.55 + r() * 0.65);
       n++;
     }
   }
@@ -159,7 +159,7 @@ export function buildBrainCloud(scale = 1) {
     push(p, [0.4 * b, 0.5 * b, 0.8 * b], 0.8 + r() * 0.5);
   }
   // Polvo interior (sustancia blanca)
-  for (let i = 0; i < 9000 * scale; i++) {
+  for (let i = 0; i < 3500 * scale; i++) {
     const h = r() < 0.5 ? -1 : 1;
     const d = randomDir(r);
     const p = cortexBase(h, d, tmp).clone();

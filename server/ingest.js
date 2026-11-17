@@ -6,7 +6,29 @@ import os from 'node:os';
 import { costOf, prettyModel } from './pricing.js';
 import { scanInventory } from './inventory.js';
 
-const CACHE_VERSION = 6;
+const CACHE_VERSION = 7;
+
+// ---------- perfil de actividad: a qué se dedica de verdad cada proyecto ----------
+// Cada acción real se clasifica en una de cuatro funciones; el cerebro coloca el proyecto
+// en la zona cortical que hace esa función en un cerebro humano.
+const IMG = /\.(png|jpe?g|webp|gif|svg|heic|bmp|avif)$/i;
+const DOC = /\.(md|mdx|txt|pdf|docx?|rtf|csv)$/i;
+export function toolCategory(name, input = {}) {
+  if (name.startsWith('mcp__')) {
+    if (/canva|unsplash|figma|image|photo|design|video/i.test(name)) return 'vision';
+    if (/docs|drive|notion|gmail|calendar|slack|search|wiki/i.test(name)) return 'lang';
+    return 'exec';
+  }
+  if (name === 'WebFetch' || name === 'WebSearch') return 'lang';
+  if (name === 'Agent' || name === 'Task') return /plan/i.test(input.subagent_type || '') ? 'plan' : null;
+  if (['AskUserQuestion', 'TodoWrite', 'EnterPlanMode', 'ExitPlanMode'].includes(name)) return 'plan';
+  const fp = String(input.file_path || input.path || input.notebook_path || '');
+  if (name === 'Read' || name === 'Write' || name === 'Edit') return IMG.test(fp) ? 'vision' : DOC.test(fp) ? 'lang' : 'exec';
+  if (name === 'Bash') return /screenshot|playwright|puppeteer|ffmpeg|magick|\bsips\b|\.(png|jpe?g|webp|mp4|mov)\b/i.test(input.command || '') ? 'vision' : 'exec';
+  if (['Glob', 'Grep', 'NotebookEdit'].includes(name)) return 'exec';
+  return null;
+}
+const zeroProf = () => ({ plan: 0, exec: 0, lang: 0, vision: 0 });
 // Umbrales de contexto (tokens que el modelo relee en cada paso) para avisar
 export const CTX_LEVELS = { warn: 100000, high: 200000 };
 const CTX_ALERTS = [200000, 400000, 600000];
@@ -194,7 +216,7 @@ export class Brain {
   project(key, cwd) {
     let p = this.s.projects[key];
     if (!p) {
-      p = this.s.projects[key] = { key, name: null, cwd: null, tok: zeroTok(), cost: 0, msgs: 0, prompts: 0, sessions: {}, tools: {}, skills: {}, agents: {}, mcps: {}, models: {}, first: 0, last: 0 };
+      p = this.s.projects[key] = { key, name: null, cwd: null, prof: zeroProf(), tok: zeroTok(), cost: 0, msgs: 0, prompts: 0, sessions: {}, tools: {}, skills: {}, agents: {}, mcps: {}, models: {}, first: 0, last: 0 };
       this.topologyChanged();
     }
     if (!p.name && cwd) {
@@ -337,6 +359,7 @@ export class Brain {
         s.lastThought = ev;
       }
       if (d.attributionSkill) this.useSkill(d.attributionSkill, p, ts, false);
+      p.prof.plan += tok.th / 1000; // razonar ≈ planificar (1 unidad por cada 1.000 tokens de razonamiento)
       this.emit(ev);
     }
 
@@ -432,6 +455,8 @@ export class Brain {
       else if (input.command) detail = input.command;
       detail = clip(String(detail), 70);
     }
+    const cat = toolCategory(name, input);
+    if (cat) p.prof[cat]++;
     const tl = this.s.tools[name] || (this.s.tools[name] = { name, uses: 0, errors: 0, first: 0, last: 0, projects: {} });
     if (!tl.uses) this.topologyChanged();
     tl.uses++; inc(tl.projects, p.key); this.touch(tl, ts);
@@ -470,6 +495,7 @@ export class Brain {
         this.emit({ ...base, k: 'result', n: pend.name, tgt: pend.target, err: !!b.is_error, id: b.tool_use_id });
       }
     }
+    if (Array.isArray(c) && !agentId) p.prof.vision += c.filter((b) => b?.type === 'image').length; // imágenes que le enseñas
     if (d.isMeta || agentId || d.isSidechain || d.isCompactSummary) return;
     let text = '';
     if (typeof c === 'string') text = c;

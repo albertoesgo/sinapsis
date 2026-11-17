@@ -21,15 +21,28 @@ export function projectColor(i) {
 }
 
 // Huecos de la corteza para proyectos (dirección relativa al centro de cada hemisferio)
-const SLOTS = [
-  [-1, [-0.3, 0.6, 0.72]], [1, [0.3, 0.6, 0.72]],
-  [-1, [-0.5, 0.5, -0.6]], [1, [0.5, 0.5, -0.6]],
-  [-1, [-0.8, 0.15, 0.5]], [1, [0.8, 0.15, 0.5]],
-  [-1, [-0.35, 0.2, -0.92]], [1, [0.35, 0.2, -0.92]],
-  [-1, [-0.85, 0.35, -0.25]], [1, [0.85, 0.35, -0.25]],
-  [-1, [-0.25, 0.25, 0.97]], [1, [0.25, 0.25, 0.97]],
-  [-1, [-0.6, -0.1, -0.7]], [1, [0.6, -0.1, -0.7]],
-];
+// Funciones corticales reales → zona donde se coloca un proyecto según lo que más hace.
+// Dirección relativa al centro de cada hemisferio (x se multiplica por el lado h).
+export const FUNCTIONS = {
+  plan:   { name: 'Planificar y razonar', lobe: 'Corteza prefrontal', why: 'planificación, decisiones y razonamiento', dir: (h) => [0.32 * h, 0.42, 0.86] },
+  exec:   { name: 'Ejecutar y construir', lobe: 'Corteza premotora', why: 'preparar y encadenar acciones, junto a la corteza motora', dir: (h) => [0.52 * h, 0.72, 0.36] },
+  lang:   { name: 'Leer, investigar y escribir', lobe: 'Lóbulo temporal izquierdo', why: 'comprensión del lenguaje (área de Wernicke), en el lado izquierdo en la mayoría de personas', dir: (h) => [0.93 * h, -0.32, 0.02] },
+  vision: { name: 'Trabajar con imágenes', lobe: 'Lóbulo occipital', why: 'corteza visual; el procesamiento visoespacial tiende a la derecha', dir: (h) => [0.32 * h, 0.22, -0.93] },
+};
+
+/** Perfil real de un proyecto frente a la media de todos: cuánto destaca en cada función. */
+export function projectProfile(p, global) {
+  const t = Object.values(p.prof || {}).reduce((a, b) => a + b, 0);
+  const gt = Object.values(global).reduce((a, b) => a + b, 0) || 1;
+  const share = {}, lift = {};
+  for (const k of Object.keys(FUNCTIONS)) {
+    share[k] = t ? (p.prof[k] || 0) / t : 0;
+    const g = (global[k] || 0) / gt;
+    lift[k] = g ? share[k] / g : 0;
+  }
+  const main = t ? Object.keys(lift).sort((a, b) => lift[b] - lift[a])[0] : 'exec';
+  return { share, lift, main, total: t, gshare: Object.fromEntries(Object.keys(FUNCTIONS).map((k) => [k, (global[k] || 0) / gt])) };
+}
 
 const log = (x) => Math.log10(1 + Math.max(0, x));
 
@@ -50,15 +63,41 @@ export function layout(snap) {
   });
 
   // Proyectos → regiones de la corteza; sus sesiones → neuronas de esa región
+  // Cada proyecto va a la zona de la corteza que hace lo que ese proyecto hace más que la media
   const projects = [...snap.projects].sort((a, b) => b.cost - a.cost);
   const projIndex = new Map();
-  projects.forEach((p, i) => {
-    const [h, d] = SLOTS[i % SLOTS.length];
-    const r = rng('p' + p.key);
-    const dir = new THREE.Vector3(...d).add(new THREE.Vector3(gauss(r), gauss(r), gauss(r)).multiplyScalar(i >= SLOTS.length ? 0.25 : 0.03)).normalize();
+  const global = { plan: 0, exec: 0, lang: 0, vision: 0 };
+  for (const p of projects) for (const k in global) global[k] += p.prof?.[k] || 0;
+  const placed = [];
+  let bilateral = 0;
+  projects.forEach((p) => {
+    const prof = projectProfile(p, global);
+    const L = prof.lift;
+    // Hemisferio: el lenguaje está lateralizado a la izquierda y lo visoespacial tiende a la derecha.
+    // Planificar y ejecutar son bilaterales: se reparten a ambos lados.
+    const h = prof.main === 'lang' ? -1 : prof.main === 'vision' ? 1 : (bilateral++ % 2 ? 1 : -1);
+    // Va a la zona en la que más destaca; si destaca también en otra, se desvía un poco hacia ella
+    const dir = new THREE.Vector3(...FUNCTIONS[prof.main].dir(h)).normalize();
+    const second = Object.keys(L).filter((k) => k !== prof.main).sort((a, b) => L[b] - L[a])[0];
+    if (second && L[second] > 1.05) dir.lerp(new THREE.Vector3(...FUNCTIONS[second].dir(h)).normalize(), 0.16).normalize();
+    placed.push({ p, h, dir, prof });
+  });
+  // separa los que caen demasiado cerca en el mismo hemisferio
+  for (let it = 0; it < 40; it++) {
+    for (const a of placed) for (const b of placed) {
+      if (a === b || a.h !== b.h) continue;
+      const ang = a.dir.angleTo(b.dir);
+      if (ang < 0.34) {
+        const push = a.dir.clone().sub(b.dir);
+        if (push.lengthSq() < 1e-6) push.set(0, (hash(a.p.key) % 2 ? 1 : -1), 0);
+        a.dir.addScaledVector(push.normalize(), (0.34 - ang) * 0.5).normalize();
+      }
+    }
+  }
+  placed.forEach(({ p, h, dir, prof }, i) => {
     const color = projectColor(i);
     projIndex.set(p.key, { h, dir, color });
-    add({ id: 'project:' + p.key, type: 'project', label: p.name || p.key, pos: cortexAt(h, dir, 0.55), color, size: 1.0 + 0.8 * (p.cost / maxCost) + 0.25 * log(p.cost), data: p, h, dir });
+    add({ id: 'project:' + p.key, type: 'project', label: p.name || p.key, pos: cortexAt(h, dir, 0.55), color, size: 1.0 + 0.8 * (p.cost / maxCost) + 0.25 * log(p.cost), data: p, h, dir, prof });
   });
   for (const s of snap.sessions) {
     const pi = projIndex.get(s.project);
@@ -79,11 +118,11 @@ export function layout(snap) {
     add({ id: 'tool:' + t.name, type: 'tool', label: t.name, pos: cortexAt(h, dir, 0.18), color: TYPE_COLOR.tool, size: 0.75 + 0.42 * log(t.uses), data: t });
   });
 
-  // Conectores MCP → lóbulos temporales (los "sentidos" hacia el exterior)
+  // Conectores MCP → lóbulo parietal (integra la información que llega de fuera)
   [...snap.mcps].sort((a, b) => b.uses - a.uses).forEach((m, i) => {
     const h = i % 2 === 0 ? -1 : 1;
     const k = Math.floor(i / 2);
-    const dir = new THREE.Vector3(h * 0.85, -0.55, 0.05 + k * 0.22 - 0.1);
+    const dir = new THREE.Vector3(h * 0.62, 0.62, -0.42 + k * 0.16);
     add({ id: 'mcp:' + m.name, type: 'mcp', label: m.label, pos: cortexAt(h, dir, 0.25), color: TYPE_COLOR.mcp, size: 0.8 + 0.45 * log(m.uses), data: m });
   });
 

@@ -10,14 +10,27 @@ Un cerebro en 3D que se ilumina con la actividad real de tus sesiones de [Claude
 
 | Región del cerebro | Qué representa |
 |---|---|
-| **Corteza** | Tus proyectos. Cada sesión es una neurona dentro de su región |
+| **Corteza** | Tus proyectos, cada uno en la zona que corresponde a lo que más hace (ver abajo). Cada sesión es una neurona dentro de su región |
 | **Tálamo** | Los modelos (Opus, Sonnet, Haiku, Fable…). Todo pensamiento pasa por aquí |
 | **Corteza motora** | Las herramientas: Bash, Read, Edit, WebFetch… |
 | **Cerebelo** | Las skills (memoria procedimental). Las que nunca se han usado se ven apagadas |
 | **Giro cingulado** | Los tipos de subagente (general-purpose, Explore, Plan…) |
-| **Lóbulo temporal** | Los conectores MCP (los "sentidos" hacia fuera) |
+| **Lóbulo parietal** | Los conectores MCP (integran información que llega de fuera) |
 | **Hipocampo** | La memoria persistente de cada proyecto |
 | **Tronco encefálico** | Tus mensajes, que entran desde aquí |
+
+### Dónde se coloca cada proyecto
+
+Cada acción real de un proyecto se clasifica en una de cuatro funciones:
+
+- **Planificar y razonar**: tokens de razonamiento (1 por cada 1.000), planes, preguntas y listas de tareas.
+- **Ejecutar y construir**: comandos, lectura y edición de código, búsquedas en el repositorio.
+- **Leer, investigar y escribir**: páginas web, búsquedas, documentos y textos (`.md`, `.pdf`, `.txt`…).
+- **Trabajar con imágenes**: imágenes que le enseñas, capturas, ficheros de imagen y conectores de diseño.
+
+Después se compara con la media de todos tus proyectos, y cada proyecto va a la zona del cerebro humano que hace aquello en lo que más destaca: corteza prefrontal (planificar), corteza premotora (ejecutar, junto a la corteza motora), lóbulo temporal **izquierdo** (lenguaje, que en la mayoría de personas está lateralizado a la izquierda) u occipital (visión, más hacia la derecha). Los proyectos de planificar y ejecutar, que son funciones de los dos hemisferios, se reparten a ambos lados. Al pasar el ratón por un proyecto se ve por qué está ahí, con sus porcentajes frente a la media.
+
+Es una correspondencia con la anatomía real, pero no una medición del cerebro: dice a qué se dedica cada proyecto, no cómo «piensa» el modelo.
 
 Y en los paneles:
 
