@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { Brain } from '../server/ingest.js';
 import { buildDemo } from '../server/demo.js';
 import { weeklyReport } from '../server/report.js';
+import { manifest, folderVersion } from '../server/manifest.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'dist');
@@ -73,11 +74,11 @@ html = html.replace('</title>', `</title>
   <meta name="twitter:card" content="summary_large_image" />`);
 if (REPO_URL) html = html.replace('<div id="toasts"></div>', `<div id="toasts"></div>\n  <a id="repo-link" href="${REPO_URL}" target="_blank" rel="noopener">Demo con datos sintéticos · <b>ver el código</b></a>`);
 fs.writeFileSync(path.join(OUT, 'index.html'), html);
-fs.writeFileSync(path.join(OUT, 'manifest.webmanifest'), JSON.stringify({
-  name: 'Sinapsis', short_name: 'Sinapsis', start_url: './', display: 'standalone', background_color: '#030409', theme_color: '#030409',
-  icons: [{ src: 'icon-512.png', sizes: '512x512', type: 'image/png' }, { src: 'icon-180.png', sizes: '180x180', type: 'image/png' }],
-}));
+fs.writeFileSync(path.join(OUT, 'manifest.webmanifest'), JSON.stringify(manifest()));
 fs.writeFileSync(path.join(OUT, '.nojekyll'), '');
+// service worker con la huella de esta versión (al publicar otra, los usuarios reciben el aviso de actualizar)
+const swFile = path.join(OUT, 'sw.js');
+fs.writeFileSync(swFile, fs.readFileSync(swFile, 'utf8').replace('__VERSION__', folderVersion(OUT)));
 
 const kb = (f) => Math.round(fs.statSync(path.join(OUT, f)).size / 1024);
 console.log(`· Demo en dist/ · ${events.length} eventos grabados · snapshot ${kb('demo/snapshot.json')} KB · ${SITE || 'sin SITE_URL'}`);

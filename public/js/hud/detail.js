@@ -102,7 +102,22 @@ export const detailMethods = {
     return `<h5>Últimos 30 días · ${money(total)}</h5><svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><rect x="0" y="${H - 1}" width="${W}" height="1" fill="rgba(255,255,255,0.06)"/>${bars}</svg>`;
   },
 
-  showDetail(n, snap) {
+  /**
+   * Abre la ficha de una neurona. Si ya había otra abierta, «atrás» vuelve a ella; si se abrió desde
+   * una hoja del móvil, «atrás» vuelve a esa hoja. `restore` = volviendo atrás (no apila otra capa).
+   */
+  showDetail(n, snap, { restore = false } = {}) {
+    if (!restore) {
+      const prevId = this.isOpen('detail') ? this.detailId : null;
+      if (prevId && prevId !== n.id) {
+        this.nav.push('detail', () => { if (!this.cb.onFocus(prevId, { restore: true })) { this._hideDetail(); this.cb.onHome?.(); } });
+      } else if (!prevId) {
+        const prevTab = isMobile() && document.body.dataset.tab !== 'brain' ? document.body.dataset.tab : null;
+        if (prevTab) this._setTab('brain');
+        this.nav.push('detail', () => { this._hideDetail(); if (prevTab) this._setTab(prevTab); else this.cb.onHome?.(); });
+      }
+    }
+    this.detailId = n.id;
     const el = $('#detail');
     const color = cssColor(n.color);
     el.style.setProperty('--c', color);
@@ -158,10 +173,24 @@ export const detailMethods = {
     el.scrollTop = 0;
     el.classList.add('open');
     this.syncSheet();
-    if (isMobile() && document.body.dataset.tab !== 'brain') this.setTab('brain');
   },
 
-  hideDetail() { $('#detail').classList.remove('open'); this.syncSheet(); },
+  /** Cierra todas las fichas encadenadas (tocar el vacío, centrar). */
+  hideDetail() {
+    if (!this.nav.unwind((l) => l.kind === 'detail')) this._hideDetail();
+  },
+
+  /** × de la ficha o deslizar: vuelve a la pantalla inmediatamente anterior. */
+  detailBack() {
+    if (this.nav.is('detail')) this.nav.back();
+    else { this._hideDetail(); this.cb.onHome?.(); }
+  },
+
+  _hideDetail() {
+    $('#detail').classList.remove('open');
+    this.detailId = null;
+    this.syncSheet();
+  },
 
   setReplay(ts, frac) {
     this.replaying = ts != null;

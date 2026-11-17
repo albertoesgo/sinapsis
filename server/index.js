@@ -14,6 +14,7 @@ import { startDemo } from './demo.js';
 import { weeklyReport } from './report.js';
 import { loadConfig, notify } from './notify.js';
 import { planStatus } from './plan.js';
+import { manifest, folderVersion } from './manifest.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -160,7 +161,10 @@ function boot() {
   process.on('SIGTERM', bye);
 }
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
+// Versión de la interfaz para el service worker: cambia si cambia cualquier fichero de public/
+const UI_VERSION = folderVersion(path.join(ROOT, 'public'));
+
+const MIME = { '.webmanifest': 'application/manifest+json; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
 
 function serveFile(res, base, rel) {
   const file = path.resolve(base, '.' + path.posix.normalize('/' + rel));
@@ -187,13 +191,17 @@ const server = http.createServer((req, res) => {
     }
   }
   if (p === '/manifest.webmanifest') {
-    res.writeHead(200, { 'Content-Type': 'application/manifest+json' });
-    res.end(JSON.stringify({
-      name: 'Sinapsis', short_name: 'Sinapsis', description: 'El sistema nervioso de Claude Code',
-      start_url: isLoopback(req) ? '/' : '/?k=' + TOKEN, display: 'standalone', orientation: 'any',
-      background_color: '#030409', theme_color: '#030409',
-      icons: [{ src: '/icon-512.png', sizes: '512x512', type: 'image/png' }, { src: '/icon-180.png', sizes: '180x180', type: 'image/png' }],
-    }));
+    res.writeHead(200, { 'Content-Type': 'application/manifest+json; charset=utf-8', 'Cache-Control': 'no-cache' });
+    res.end(JSON.stringify(manifest({ startUrl: isLoopback(req) ? './' : './?k=' + TOKEN })));
+    return;
+  }
+  if (p === '/sw.js') {
+    // el service worker solo funciona en contexto seguro: aquí, en localhost (por la wifi es http y el navegador no lo activa)
+    fs.readFile(path.join(ROOT, 'public', 'sw.js'), 'utf8', (err, txt) => {
+      if (err) { res.writeHead(404).end(); return; }
+      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
+      res.end(txt.replace('__VERSION__', UI_VERSION));
+    });
     return;
   }
   if (p === '/api/mobile') {

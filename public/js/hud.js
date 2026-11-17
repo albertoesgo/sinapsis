@@ -3,6 +3,7 @@
 import { isMobile } from './ui.js';
 import { $, $$, CH, FOLD_KEY, REGIONS, cssColor, dayKey, esc } from './hud/format.js';
 import { swipeToClose } from './hud/gestures.js';
+import { Nav } from './hud/nav.js';
 import { planMethods } from './hud/plan.js';
 import { panelsMethods } from './hud/panels.js';
 import { reportMethods } from './hud/report.js';
@@ -25,6 +26,7 @@ export class Hud {
     this.invTab = 'skills';
     this.invState = 'all';
     this.allProjects = false;
+    this.nav = new Nav();
     this.bind();
   }
 
@@ -37,12 +39,13 @@ export class Hud {
     $('#btn-rotate').onclick = (e) => { const on = e.currentTarget.classList.toggle('on'); this.cb.onToggleRotate(on); };
     $('#btn-labels').onclick = (e) => { this.showLabels = e.currentTarget.classList.toggle('on'); };
     $('#btn-info').onclick = () => this.openModal('info');
-    $('#btn-home').onclick = () => { this.hideDetail(); this.cb.onHome?.(); };
+    $('#btn-home').onclick = () => this.goHome();
+    $('#brand h1').onclick = () => this.goHome();
     $('#btn-report').onclick = () => this.openReport();
     $('#btn-search').onclick = () => this.openPalette();
     $('#inv-toggle').onclick = () => this.toggleInventory();
     $('#inventory .close').onclick = () => this.toggleInventory(false);
-    $('#detail .close').onclick = () => { this.hideDetail(); this.cb.onHome?.(); };
+    $('#detail .close').onclick = () => this.detailBack();
 
     // diálogos: cierre con el fondo, la × o Esc
     $$('[data-modal]').forEach((m) => {
@@ -130,11 +133,22 @@ export class Hud {
 
     // móvil: deslizar hacia abajo cierra hojas y diálogos
     const toBrain = () => this.setTab('brain');
+    // botones solo con icono: nombre accesible a partir del título; interruptores con su estado
+    $$('button[title]').forEach((b) => { if (!b.textContent.trim() && !b.getAttribute('aria-label')) b.setAttribute('aria-label', b.title.replace(/ ·.*$/, '')); });
+    $$('#btn-rotate, #btn-labels').forEach((b) => {
+      b.setAttribute('aria-pressed', b.classList.contains('on'));
+      b.addEventListener('click', () => b.setAttribute('aria-pressed', b.classList.contains('on')));
+    });
+    $$('.card').forEach((c) => {
+      const f = $('header .fold', c);
+      f?.setAttribute('aria-expanded', !c.classList.contains('folded'));
+      $('header', c).addEventListener('click', () => f?.setAttribute('aria-expanded', !c.classList.contains('folded')));
+    });
     for (const id of ['left', 'right', 'inventory', 'detail']) $('#' + id).classList.add('sheetable');
     swipeToClose($('#left'), toBrain);
     swipeToClose($('#right'), toBrain);
     swipeToClose($('#inventory'), toBrain);
-    swipeToClose($('#detail'), () => { this.hideDetail(); this.cb.onHome?.(); });
+    swipeToClose($('#detail'), () => this.detailBack());
     $$('[data-modal]').forEach((m) => { if (m.id !== 'palette') swipeToClose($('article', m), () => this.closeModal(m.id), $('.mbody', m)); });
 
     // escritorio: sombra al pie de un panel cuando queda contenido por debajo
@@ -152,36 +166,77 @@ export class Hud {
   onKey(e) {
     const typing = e.target.matches?.('input, textarea');
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); this.isOpen('palette') ? this.closeModal('palette') : this.openPalette(); return; }
-    if (e.key === 'Escape') {
-      const open = $$('[data-modal].open');
-      if (open.length) { this.closeModal(open[open.length - 1].id); return; }
-      if ($('#inventory').classList.contains('open')) { this.toggleInventory(false); return; }
-      if ($('#detail').classList.contains('open')) { this.hideDetail(); this.cb.onHome?.(); return; }
-      if (document.body.dataset.tab !== 'brain') this.setTab('brain');
-      return;
-    }
+    // Esc = «atrás»: cierra solo la pantalla de arriba
+    if (e.key === 'Escape') { if (!this.nav.back() && this.isOpen('detail')) this.detailBack(); return; }
     if (typing || e.metaKey || e.ctrlKey || e.altKey || $$('[data-modal].open').length) return;
     const k = e.key.toLowerCase();
     if (k === '/') { e.preventDefault(); this.openPalette(); }
     else if (k === 'r') this.openReport();
     else if (k === 'i') this.toggleInventory();
-    else if (k === 'h') { this.hideDetail(); this.cb.onHome?.(); }
+    else if (k === 'h') this.goHome();
     else if (k === 'l') $('#btn-labels').click();
     else if (k === 'p') this.toggleReplay();
     else if (k === ' ') { e.preventDefault(); $('#btn-rotate').click(); }
     else if (e.key === '?') this.openModal('info');
   }
 
+  // ---------- PWA ----------
+  /** Hay una versión nueva esperando: aviso que no desaparece solo hasta que se decida. */
+  offerUpdate(apply) {
+    if ($('#toasts .toast.update')) return;
+    const el = document.createElement('div');
+    el.className = 'toast update';
+    el.innerHTML = '<b>Hay una versión nueva de Sinapsis</b><span>Actualiza cuando quieras: tarda un segundo.</span><div class="acts"><button class="go">Actualizar</button><button class="later">Más tarde</button></div>';
+    $('.go', el).onclick = (e) => { e.stopPropagation(); e.currentTarget.textContent = 'Actualizando…'; apply(); };
+    $('.later', el).onclick = (e) => { e.stopPropagation(); el.remove(); };
+    $('#toasts').prepend(el);
+  }
+
+  setInstaller(inst) { this.installer = inst; }
+  onInstallState(st) {
+    this.installState = st;
+    $('#install-row').hidden = !(st.canPrompt || st.iosHint);
+    $('#btn-install').onclick = () => this.install();
+  }
+  async install() {
+    const st = this.installState || {};
+    if (st.iosHint) { this.closeModal('info'); this.openModal('install'); return; }
+    const out = await this.installer?.prompt();
+    if (out === 'accepted') this.closeModal('info');
+  }
+
+  /** Abre una tarjeta concreta (accesos directos): en el móvil, su pestaña; en escritorio, desplegada y a la vista. */
+  showCard(card) {
+    if (isMobile()) { this.setTab(card === 'plan' ? 'metab' : card === 'impulses' ? 'feed' : 'thought'); return; }
+    const c = $(`.card[data-card="${card}"]`);
+    c?.classList.remove('folded');
+    c?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  /** Vuelve a la vista inicial: cierra fichas y hojas y encuadra el cerebro entero. */
+  goHome() {
+    this.nav.unwind((l) => l.kind === 'detail' || l.kind === 'tab' || l.kind === 'inv');
+    this._hideDetail();
+    if (document.body.dataset.tab !== 'brain') this._setTab('brain');
+    this.cb.onHome?.();
+  }
+
   isOpen(id) { return $('#' + id).classList.contains('open'); }
   openModal(id) {
-    this.lastFocus = document.activeElement;
+    if (this.isOpen(id)) return;
+    const prevFocus = document.activeElement;
     $('#' + id).classList.add('open');
     $('#tip').classList.remove('show');
-    setTimeout(() => $('#' + id + ' input')?.focus({ preventScroll: true }), 30);
+    $('#' + id + ' input')?.focus({ preventScroll: true }); // inmediato: lo que se teclee ya va al buscador
+    this.nav.push('modal:' + id, () => {
+      $('#' + id).classList.remove('open');
+      if (prevFocus && document.contains(prevFocus)) prevFocus.focus?.({ preventScroll: true });
+      else document.activeElement?.blur?.();
+    });
   }
   closeModal(id) {
-    $('#' + id).classList.remove('open');
-    this.lastFocus?.focus?.({ preventScroll: true });
+    if (this.nav.is('modal:' + id)) this.nav.back();
+    else if (!this.nav.remove('modal:' + id)) $('#' + id).classList.remove('open');
   }
 
   toggleReplay() {
@@ -192,10 +247,19 @@ export class Hud {
 
   toggleInventory(force) {
     if (isMobile()) { this.setTab('inv'); return; }
-    const o = $('#inventory').classList.toggle('open', force);
-    $('#inv-toggle').classList.toggle('on', o);
-    if (!o && $('#inventory').contains(document.activeElement)) document.activeElement.blur();
-    if (o) { this.renderInventory(); setTimeout(() => $('#inv-filter').focus({ preventScroll: true }), 30); }
+    const open = force ?? !this.isOpen('inventory');
+    if (!open) { if (!this.nav.remove('inv')) this._hideInventory(); return; }
+    if (this.isOpen('inventory')) return;
+    $('#inventory').classList.add('open');
+    $('#inv-toggle').classList.add('on');
+    this.renderInventory();
+    setTimeout(() => $('#inv-filter').focus({ preventScroll: true }), 30);
+    this.nav.push('inv', () => this._hideInventory());
+  }
+  _hideInventory() {
+    $('#inventory').classList.remove('open');
+    $('#inv-toggle').classList.remove('on');
+    if ($('#inventory').contains(document.activeElement)) document.activeElement.blur();
   }
 
   openMobile() {
@@ -220,12 +284,23 @@ export class Hud {
     this.cb.onLayout?.();
   }
 
+  /** Pestañas del móvil. Cambiar de pestaña no acumula historial: «atrás» siempre vuelve al cerebro. */
   setTab(tab) {
+    if (tab === 'brain') {
+      this.nav.unwind((l) => l.kind === 'tab' || l.kind === 'detail');
+      if (document.body.dataset.tab !== 'brain') this._setTab('brain');
+      return;
+    }
+    this.nav.unwind((l) => l.kind === 'detail');
+    this._setTab(tab);
+    if (!this.nav.is('tab')) this.nav.push('tab', () => this._setTab('brain'));
+  }
+
+  _setTab(tab) {
     document.body.dataset.tab = tab;
     setTimeout(() => this.syncSheet(), 0);
-    $$('#tabbar button').forEach((x) => x.classList.toggle('on', x.dataset.tab === tab));
-    if (tab !== 'brain') this.hideDetail();
-    else $$('.sheetable.expanded').forEach((x) => x.classList.remove('expanded'));
+    $$('#tabbar button').forEach((x) => { x.classList.toggle('on', x.dataset.tab === tab); x.setAttribute('aria-current', x.dataset.tab === tab ? 'page' : 'false'); });
+    if (tab === 'brain') $$('.sheetable.expanded').forEach((x) => x.classList.remove('expanded'));
     if (tab === 'inv') this.renderInventory();
     if (tab === 'metab' && this.snap) this.renderMetabolism(this.snap);
   }
@@ -279,6 +354,9 @@ export class Hud {
       this.renderFeed();
     }
     $('#demo-badge').hidden = !snap.demo;
+    const canReplay = !!snap.recent?.length;
+    $('#btn-replay').disabled = !canReplay;
+    $('#btn-replay').title = canReplay ? 'Reproduce, acelerada, la actividad real de las últimas 24 horas · P' : 'No hay actividad en las últimas 24 horas';
     const live = snap.liveSessions.length;
     const today = snap.daily[dayKey(Date.now())];
     $('#status').innerHTML = `<b>${live}</b> ${live === 1 ? 'sesión abierta' : 'sesiones abiertas'} · <b>${(today?.prompts || 0).toLocaleString('es-ES')}</b> peticiones hoy<span class="opt"> · <b>${snap.recent.length.toLocaleString('es-ES')}</b> impulsos en 24 h</span>`;

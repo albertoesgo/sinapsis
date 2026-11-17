@@ -103,6 +103,8 @@ Con `--lan`, Sinapsis también responde en tu wifi, protegido con una clave secr
 
 Si macOS pregunta si `node` puede aceptar conexiones entrantes, pulsa **Permitir**.
 
+Por la wifi la conexión es `http`, y los navegadores solo activan el modo sin conexión y el botón de instalar con `https` o en `localhost`. En el iPhone, *Añadir a pantalla de inicio* funciona igualmente. En el propio ordenador (`localhost`) y en la [demo pública](https://albertoesgo.github.io/sinapsis/) es una PWA completa.
+
 ### Avisos en el móvil aunque la app esté cerrada (opcional)
 
 Por defecto los avisos son locales: la notificación de macOS y la propia app. Para recibirlos en el móvil en cualquier momento, instala la app [ntfy](https://ntfy.sh), suscríbete a un tema con un nombre difícil de adivinar y añádelo a `~/.sinapsis/config.json`:
@@ -144,6 +146,7 @@ flowchart LR
 - **Cerebro procedural.** Unas 110.000 partículas con ruido de Perlin forman hemisferios, surcos, cerebelo y tronco. Las ondas de activación se calculan en el *vertex shader*, el resplandor con *bloom* y los impulsos son curvas de Bézier con estela. Si el dispositivo no llega a 40 fps, la resolución baja sola.
 - **Límites del plan aprendidos de los datos.** Anthropic no publica el tamaño de los límites. Sinapsis lee los cortes reales del historial («You've hit your 5-hour limit · resets …») y mide lo consumido justo antes, en franjas de 10 minutos.
 - **Seguridad.** Solo escucha en `127.0.0.1`. Con `--lan` exige una clave aleatoria (cookie `HttpOnly`). Los nombres de host se validan contra el *DNS rebinding*, y todo el texto se escapa antes de pintarlo.
+- **PWA completa.** Se instala como app (iconos *maskable*, capturas y accesos directos a Informe, Plan, Buscar e Impulsos) y abre sin conexión con un *service worker* versionado. Cuando hay una versión nueva, avisa y se actualiza con una sola recarga. «Atrás» (botón, gesto de Android o Esc) cierra solo la pantalla de arriba y vuelve a la anterior, sin salir de la app.
 - **Responsive y táctil.** Paneles en escritorio; hojas inferiores con gestos (deslizar para cerrar o ampliar, doble toque para centrar) en móvil y tableta; hojas laterales con el móvil en horizontal; alturas en `dvh` para que Safari no corte nada.
 - **Pruebas e integración continua.** `npm run lint` (ESLint) y `npm test` (con `node:test`, sin dependencias). Las pruebas cubren precios, lectura de registros, cortes del plan y el informe. GitHub Actions las ejecuta en Node 20, 22 y 24 y publica la demo en GitHub Pages.
 

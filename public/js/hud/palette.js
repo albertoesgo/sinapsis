@@ -17,13 +17,14 @@ export const paletteMethods = {
     const out = [
       A('Informe de la semana', 'R', () => this.openReport(), 'qué ha pasado y qué cambiar'),
       A('Inventario', 'I', () => this.toggleInventory(true), 'skills, agentes, herramientas…'),
-      A('Centrar el cerebro', 'H', () => { this.hideDetail(); this.cb.onHome?.(); }),
+      A('Centrar el cerebro', 'H', () => this.goHome()),
       A(this.replaying ? 'Detener la reproducción' : 'Reproducir las últimas 24 h', 'P', () => this.toggleReplay()),
       A('Rotación automática', '␣', () => $('#btn-rotate').click()),
       A('Mostrar u ocultar etiquetas', 'L', () => $('#btn-labels').click()),
       A('Qué es real y atajos', '?', () => this.openModal('info')),
     ];
     if (this.mobileInfo) out.push(A('Ver en el móvil', '', () => this.openMobile(), 'código QR'));
+    if (this.installState?.canPrompt || this.installState?.iosHint) out.push(A('Instalar Sinapsis como app', '', () => this.install(), 'pantalla completa y sin conexión'));
     if (!snap) return out;
     const pname = (k) => snap.projects.find((p) => p.key === k)?.name || k;
     const node = (id, group, label, sub, extra = 0) => {

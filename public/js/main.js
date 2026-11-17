@@ -9,6 +9,7 @@ import { layout, somaMaterial, lineMaterial, buildDendrites, buildAxons, curvePo
 import { Hud } from './hud.js';
 import { isMobile, isLandscapePhone, STATIC } from './ui.js';
 import * as Static from './static.js';
+import { registerSW, installer, consumeOpenParam } from './pwa.js';
 
 // ---------- escena ----------
 const canvas = document.getElementById('scene');
@@ -287,7 +288,7 @@ const api = (path) => (STATIC ? Static.api(path) : fetch(path).then((r) => (r.ok
 
 const hud = new Hud({
   api: (path) => api(path),
-  onFocus: (id) => focusNode(id),
+  onFocus: (id, opts) => focusNode(id, opts),
   onReplay: (events) => replay(events),
   onToggleRotate: (v) => { rotateOn = v; if (!focused) controls.autoRotate = v; },
   onHome: () => goHome(),
@@ -324,7 +325,7 @@ function goHome() {
   focused = false;
   controls.autoRotate = rotateOn;
 }
-function focusNode(id) {
+function focusNode(id, opts = {}) {
   focused = true;
   controls.autoRotate = false;
   const n = state.nodes.get(id);
@@ -336,7 +337,8 @@ function focusNode(id) {
   const camTo = to.clone().addScaledVector(dir, MOBILE ? 18 : 13);
   focusAnim = { t: 0, from, to, camFrom, camTo };
   excite(id, 1.2);
-  hud.showDetail(n, state.snap);
+  hud.showDetail(n, state.snap, opts);
+  return true;
 }
 
 const mouse = new THREE.Vector2(-9, -9);
@@ -354,7 +356,7 @@ canvas.addEventListener('pointerup', (e) => {
     const now = performance.now();
     const dbl = now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40;
     lastTap = { t: now, x: e.clientX, y: e.clientY };
-    if (dbl && !hovered) { hud.hideDetail(); goHome(); return; }
+    if (dbl && !hovered) { hud.goHome(); return; }
   }
   if (hovered) focusNode(hovered.id);
   else { hud.hideDetail(); if (focused) goHome(); }
@@ -467,7 +469,7 @@ function connect() {
   es.onerror = () => hud.setConnection(false);
 }
 
-canvas.addEventListener('dblclick', () => { hud.hideDetail(); goHome(); });
+canvas.addEventListener('dblclick', () => hud.goHome());
 updateViewOffset();
 applyViewOffset(true);
 await load();
@@ -481,4 +483,15 @@ const origRender = hud.render.bind(hud);
 hud.render = (snap) => { origRender(snap); live = new Set(snap.liveSessions); };
 connect();
 frame();
+
+// PWA: versión nueva → aviso; instalar → botón o instrucciones; accesos directos → ?open=…
+registerSW('sw.js', { onUpdate: (apply) => hud.offerUpdate(apply) }).catch(() => {});
+hud.setInstaller(installer({ onChange: (s) => hud.onInstallState(s) }));
+consumeOpenParam({
+  report: () => hud.openReport(),
+  search: () => hud.openPalette(),
+  plan: () => hud.showCard('plan'),
+  feed: () => hud.showCard('impulses'),
+  inventory: () => hud.toggleInventory(true),
+});
 window.__sinapsis = { get state() { return state; }, focusNode, onPulse, camera, controls, view };
