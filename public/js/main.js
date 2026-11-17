@@ -307,7 +307,7 @@ function replay(events) {
     onPulse(ev, { fromReplay: true });
     hud.setReplay(ev.ts, i / evs.length);
     const next = evs[i];
-    const gap = next ? Math.min(1800, Math.max(40, (next.ts - ev.ts) / 30)) : 0;
+    const gap = next ? Math.min(1800, Math.max(40, (next.ts - ev.ts) / 30)) / (hud.replaySpeed || 1) : 0;
     replayTimer = setTimeout(step, gap);
   };
   step();

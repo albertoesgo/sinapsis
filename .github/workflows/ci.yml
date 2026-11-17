@@ -29,9 +29,8 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - run: npm run lint
       - run: npm test
-      - name: Comprobar la sintaxis del navegador
-        run: for f in public/js/*.js; do node --check "$f"; done
 
   pages:
     name: Publicar la demo

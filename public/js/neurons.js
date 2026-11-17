@@ -230,7 +230,7 @@ export function buildDendrites(nodes) {
     const c = n.color.clone().multiplyScalar(n.dormant ? 0.06 : 0.16);
     for (let b = 0; b < branches; b++) {
       let p = n.pos.clone();
-      let dir = new THREE.Vector3(gauss(r), gauss(r), gauss(r)).normalize();
+      const dir = new THREE.Vector3(gauss(r), gauss(r), gauss(r)).normalize();
       let l = len * (0.6 + r() * 0.6);
       const depth = 3 + Math.floor(r() * 2);
       for (let s = 0; s < depth; s++) {

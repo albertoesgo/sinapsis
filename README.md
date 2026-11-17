@@ -87,7 +87,7 @@ Sin datos propios, o para enseñarlo:
 
 ```bash
 npm run demo         # actividad sintética
-npm test             # pruebas
+npm run check        # ESLint y pruebas
 npm run build:demo   # demo estática en dist/ (la que se publica en GitHub Pages)
 ```
 
@@ -145,7 +145,7 @@ flowchart LR
 - **Límites del plan aprendidos de los datos.** Anthropic no publica el tamaño de los límites. Sinapsis lee los cortes reales del historial («You've hit your 5-hour limit · resets …») y mide lo consumido justo antes, en franjas de 10 minutos.
 - **Seguridad.** Solo escucha en `127.0.0.1`. Con `--lan` exige una clave aleatoria (cookie `HttpOnly`). Los nombres de host se validan contra el *DNS rebinding*, y todo el texto se escapa antes de pintarlo.
 - **Responsive y táctil.** Paneles en escritorio; hojas inferiores con gestos (deslizar para cerrar o ampliar, doble toque para centrar) en móvil y tableta; hojas laterales con el móvil en horizontal; alturas en `dvh` para que Safari no corte nada.
-- **Pruebas e integración continua.** `npm test` (con `node:test`, sin dependencias) cubre precios, lectura de registros, cortes del plan y el informe. GitHub Actions las ejecuta en Node 20, 22 y 24 y publica la demo en GitHub Pages.
+- **Pruebas e integración continua.** `npm run lint` (ESLint) y `npm test` (con `node:test`, sin dependencias). Las pruebas cubren precios, lectura de registros, cortes del plan y el informe. GitHub Actions las ejecuta en Node 20, 22 y 24 y publica la demo en GitHub Pages.
 
 ### Ficheros
 
@@ -154,7 +154,8 @@ flowchart LR
 - `server/inventory.js` hace inventario de lo instalado, se use o no.
 - `public/js/brain.js` genera la anatomía de forma procedural: dos hemisferios con circunvoluciones hechas con ruido de Perlin, surco central, cisura de Silvio, cerebelo con folias y tronco encefálico. Son unas 110.000 partículas con ondas de activación en el *shader*.
 - `public/js/neurons.js` coloca cada nodo real en su región anatómica, con somas, dendritas, axones curvos y la animación de los impulsos.
-- `public/js/hud.js` se encarga de los paneles, el EEG, la anatomía del pensamiento y el inventario.
+- `public/js/hud.js` reúne el estado de la interfaz; cada área vive en su módulo de `public/js/hud/` (plan, paneles, impulsos, búsqueda, informe, detalle, gestos y formato).
+- `public/js/static.js` hace de servidor en la demo pública: desplaza las fechas de los datos grabados y reproduce la actividad en bucle.
 
 Depende de [three.js](https://threejs.org) y de [qrcode](https://github.com/soldair/node-qrcode).
 

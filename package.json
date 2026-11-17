@@ -10,7 +10,9 @@
     "test": "node --test",
     "build:demo": "node scripts/build-demo.mjs",
     "service:install": "bash scripts/install-service.sh",
-    "service:uninstall": "bash scripts/uninstall-service.sh"
+    "service:uninstall": "bash scripts/uninstall-service.sh",
+    "lint": "eslint .",
+    "check": "npm run lint && npm test"
   },
   "engines": {
     "node": ">=20"
@@ -32,5 +34,10 @@
     "type": "git",
     "url": "https://github.com/albertoesgo/sinapsis"
   },
-  "homepage": "https://albertoesgo.github.io/sinapsis/"
+  "homepage": "https://albertoesgo.github.io/sinapsis/",
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "globals": "^17.14.0"
+  }
 }
