@@ -28,7 +28,7 @@ export const atlasMethods = {
     const exps = (a.experiments || []).map((e) => {
       const side = (s, label) => `<div><small>${label}</small><b>${s.n ? `${n1(s.x)} pasos` : '—'}</b><span>${s.n ? `${usd(s.c)} por tarea · ${s.n} tarea${s.n === 1 ? '' : 's'}` : 'sin tareas aún'}</span></div>`;
       const verdict = !e.enough ? `Midiendo: ${e.after.n} de 5 tareas para comparar.` : e.after.x < e.before.x ? `<b>Busca ${pct(1 - e.after.x / e.before.x)} menos</b> antes de editar.` : '<b>No reduce la búsqueda</b> por ahora.';
-      return `<div class="atl-exp"><p><b>Experimento: ${esc(e.label)} en ${esc(e.project)}</b> · desde el ${day(e.since)}. Búsqueda antes de editar y coste por tarea (se usó en ${e.after.used} de ${e.after.n}).</p>
+      return `<div class="atl-exp"><p><b>Experimento: ${esc(e.label)} en ${esc(e.project)}</b> · desde el ${day(e.since)}. Búsqueda antes de editar y coste por tarea${e.after.n ? ` (se consultó el grafo en ${e.after.used} de ${e.after.n})` : ''}.</p>
         <div class="grid3 atl-ab">${side(e.before, '30 días antes')}${side(e.after, 'después')}<div><small>resultado</small><span>${verdict}</span></div></div></div>`;
     }).join('');
     const graphsTxt = a.graphs?.length ? `<p class="atl-note">Grafo de código (Graphify): ${a.graphs.map((g) => `<b>${esc(g.name)}</b> (${g.nodes.toLocaleString('es-ES')} símbolos)`).join(', ')}. Las pistas dicen qué función y en qué línea.</p>` : '';
