@@ -18,6 +18,7 @@ import { manifest, folderVersion } from './manifest.js';
 import { buildVault } from './vault.js';
 import { findProject, where } from './where.js';
 import { buildAtlas, brief, hint, atlasSummary } from './atlas.js';
+import { loadGraph, symbolsFor, updateGraph, graphFile } from './graph.js';
 import { USAGE_FILE, readReadings, addReading, manualReading, pollAnthropic } from './usage.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -130,6 +131,33 @@ function atlas() {
   if (!atlasCache || atlasCache.mark !== mark || Date.now() - atlasCache.at > 60e3) atlasCache = { mark, at: Date.now(), a: buildAtlas(brain.s, { home: os.homedir() }) };
   return atlasCache.a;
 }
+// Grafos de código de Graphify: proyectos del atlas con graphify-out/graph.json
+let graphRoots = { at: 0, set: new Set() };
+const graphs = {
+  roots() {
+    if (Date.now() - graphRoots.at > 60e3) graphRoots = { at: Date.now(), set: new Set([...atlas().regions.keys()].filter((r) => fs.existsSync(graphFile(r)))) };
+    return graphRoots.set;
+  },
+  symbols: (root, rel, text) => symbolsFor(loadGraph(root), rel, text),
+};
+let graphBusy = false;
+/** Rehace el grafo de los proyectos en los que Claude ha trabajado desde la última vez (de uno en uno). */
+function refreshGraphs() {
+  if (graphBusy) return;
+  for (const root of graphs.roots()) {
+    const r = atlas().regions.get(root);
+    let m = 0;
+    try { m = fs.statSync(graphFile(root)).mtimeMs; } catch { continue; }
+    if (!r || r.last <= m + 60e3) continue;
+    graphBusy = true;
+    updateGraph(root, (err) => { graphBusy = false; if (err) console.error('graphify', root, err.message); });
+    return;
+  }
+}
+// Experimentos antes/después (p. ej. Graphify en lookit): ~/.sinapsis/experiments.json
+const EXP_FILE = path.join(os.homedir(), '.sinapsis', 'experiments.json');
+const experiments = () => { try { return JSON.parse(fs.readFileSync(EXP_FILE, 'utf8')); } catch { return []; } };
+
 function loadHints() {
   try {
     for (const line of fs.readFileSync(HINTS_FILE, 'utf8').split('\n')) { if (line) { try { brain.noteHint(JSON.parse(line)); } catch { /* línea rota */ } } }
@@ -200,6 +228,7 @@ function boot() {
   };
   vault();
   setInterval(() => { if (vaultMark() !== lastVaultMark) vault(); }, 10 * 60e3);
+  setInterval(() => { try { refreshGraphs(); } catch (e) { console.error('grafos', e.message); } }, 10 * 60e3);
   rebuildVault = vault;
   // Avisos del plan: al pasar del 75 % y del 90 % del presupuesto estimado de la ventana de 5 h o de la semana
   setInterval(() => {
@@ -291,10 +320,10 @@ const server = http.createServer((req, res) => {
     readBody(req).then((b) => {
       if (!b || DEMO) { sendJson(req, res, {}); return; }
       const cwd = String(b.cwd || ''), sid = String(b.sid || '');
-      if (b.ev === 'start') { sendJson(req, res, { text: brief(atlas(), cwd, { donde: DONDE }) }); return; }
-      const h = hint(atlas(), cwd, String(b.prompt || '').slice(0, 4000));
+      if (b.ev === 'start') { sendJson(req, res, { text: brief(atlas(), cwd, { donde: DONDE, graphs }) }); return; }
+      const h = hint(atlas(), cwd, String(b.prompt || '').slice(0, 4000), { graphs });
       if (h && sid) {
-        const rec = { ts: Date.now(), sid, cwd, files: h.files, conf: Math.round(h.conf * 100) / 100 };
+        const rec = { ts: Date.now(), sid, cwd, files: h.files.map((f) => path.resolve(cwd, f)), conf: Math.round(h.conf * 100) / 100 };
         brain.noteHint(rec);
         fs.appendFile(HINTS_FILE, JSON.stringify(rec) + '\n', () => {});
       }
@@ -305,7 +334,7 @@ const server = http.createServer((req, res) => {
   if (p === '/api/atlas') {
     let hooks = false;
     try { hooks = fs.readFileSync(path.join(CLAUDE_DIR, 'settings.json'), 'utf8').includes('scripts/hook.mjs'); } catch { /* sin ajustes */ }
-    sendJson(req, res, { ...atlasSummary(atlas(), brain.s), hooks, demo: DEMO });
+    sendJson(req, res, { ...atlasSummary(atlas(), brain.s, { experiments: DEMO ? [] : experiments() }), hooks, demo: DEMO, graphs: DEMO ? [] : [...graphs.roots()].map((r) => ({ name: atlas().regions.get(r)?.name, nodes: loadGraph(r)?.nodes || 0 })) });
     return;
   }
   if (p === '/api/usage') {

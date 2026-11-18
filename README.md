@@ -88,6 +88,17 @@ También a mano:
 
 Es una pista estadística (palabras en común con peticiones anteriores, ponderadas por su rareza, más el nombre de los ficheros), no una lectura del código. Para quitar los hooks: `npm run hooks:remove`.
 
+### Con grafo de código (Graphify)
+
+[Graphify](https://github.com/Graphify-Labs/graphify) analiza el código con tree-sitter y construye un grafo de qué llama a qué. Se complementan: Sinapsis sabe por tu historial **qué ficheros** tocar; el grafo sabe **qué funciones hay dentro y en qué línea**. Con los dos, la pista dice «en `shopify.ts`, `sortedSizes()` (línea 294)» y Claude lee ese trozo en vez del fichero entero. Las tareas se escriben en español y el código está en inglés, así que un diccionario corto de términos de desarrollo hace de puente (talla → size, carrito → cart…).
+
+```bash
+pipx install graphifyy                          # el ejecutable de Graphify (código abierto, Apache 2.0)
+npm run graph:add -- ~/Proyectos/mi-proyecto    # grafo solo de código: local y sin IA, fuera de git
+```
+
+Sinapsis lo rehace cuando Claude trabaja en ese proyecto y **lo mide como un experimento**: compara las tareas de los 30 días anteriores con las de después (pasos de búsqueda antes de editar y coste por tarea), con los proyectos sin grafo como grupo de control. No se usa la instalación global de Graphify a propósito: añade un aviso antes de cada Read y Grep en todos los proyectos, y eso gasta tokens también donde no hay grafo.
+
 ## Qué es real y qué no
 
 Todos los datos salen de los registros que Claude Code ya guarda en `~/.claude/projects/**/*.jsonl` (uso de tokens de cada respuesta, llamadas a herramientas, subagentes, títulos de sesión…) y de lo que tienes instalado en `~/.claude/skills`, los plugins y las carpetas de memoria. **Nada sale de tu ordenador**: por defecto el servidor solo escucha en `127.0.0.1`, no hace peticiones a internet (salvo la consulta opcional del uso real, desactivada por defecto) y, si activas el acceso desde el móvil, solo responde en tu red local y con clave.
@@ -182,6 +193,7 @@ flowchart LR
 ### Ficheros
 
 - `server/where.js` responde «dónde mirar» (TF-IDF sobre peticiones pasadas). `server/atlas.js` une todos los proyectos en un mapa con regiones y conexiones, genera el contexto de los hooks (`scripts/hook.mjs`) y mide el acierto. `server/vault.js` genera el vault de Obsidian y `scripts/donde.mjs` lo lleva a la terminal.
+- `server/graph.js` lee el grafo de Graphify, encuentra los símbolos de cada pista y lo mantiene al día.
 - `server/usage.js` guarda las lecturas reales del plan (de `scripts/statusline.mjs`, de tu corrección o de la consulta opcional) y `server/plan.js` las combina con la estimación.
 - `server/plan.js` reconstruye las ventanas de 5 horas y la semana a partir del consumo en franjas de 10 minutos y de los cortes reales.
 - `server/ingest.js` lee los `.jsonl` de forma incremental (por desplazamiento de bytes), descarta duplicados por id de mensaje y agrega el uso de tokens, el coste, las herramientas, las skills, los subagentes, los conectores y la memoria. Envía cada evento al navegador por *Server-Sent Events*.

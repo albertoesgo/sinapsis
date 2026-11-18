@@ -17,7 +17,7 @@ import { tokenize, stem, where, projectMap } from './where.js';
 const dirname = (p) => p.slice(0, p.lastIndexOf('/')) || '/';
 const basename = (p) => p.slice(p.lastIndexOf('/') + 1);
 const inside = (abs, root) => abs === root || abs.startsWith(root + '/');
-const JUNK_DIR = /(^|\/)(node_modules|\.git|dist|build|out|coverage|\.cache|\.next|\.nuxt|\.venv|venv|__pycache__|\.turbo|\.vercel|\.wrangler)\//; // como en ingest.js
+const JUNK_DIR = /(^|\/)(node_modules|\.git|dist|build|out|coverage|\.cache|\.next|\.nuxt|\.venv|venv|__pycache__|\.turbo|\.vercel|\.wrangler|graphify-out)\//; // como en ingest.js
 const EDIT_W = 2; // en una petición, peso ≥ 2 = el fichero se editó (Edit 3, sed -i / > 2)
 
 /** Umbral de confianza para dar una pista sin que la pidan (calibrado con evaluate() sobre tu historial). */
@@ -98,7 +98,7 @@ export function buildAtlas(state, { home = '', now = Date.now() } = {}) {
       for (let i = 0; i < roots.length; i++) for (let j = i + 1; j < roots.length; j++) link(roots[i], roots[j], 'co');
       for (const [root, f] of by) {
         const r = region(root);
-        r.turns.push({ ts: t.ts, t: t.t, q: t.q, f, k: t.k, x: t.x, e: t.e });
+        r.turns.push({ ts: t.ts, t: t.t, q: t.q, f, k: t.k, x: t.x, e: t.e, c: t.c, n: t.n, g: t.g, h: t.h });
         r.last = Math.max(r.last, t.ts || 0);
         for (const sk of t.k || []) r.skills[sk] = (r.skills[sk] || 0) + 1;
       }
@@ -200,7 +200,7 @@ export function related(atlas, root, n = 3) {
  * Contexto de arranque (SessionStart: al abrir, reanudar, limpiar o compactar una sesión).
  * Corto a propósito: se paga en cada sesión, así que solo lleva lo que evita explorar a ciegas.
  */
-export function brief(atlas, cwd, { now = Date.now(), donde = 'donde.mjs', maxChars = 1500 } = {}) {
+export function brief(atlas, cwd, { now = Date.now(), donde = 'donde.mjs', maxChars = 1500, graphs = null } = {}) {
   const sc = scope(atlas, cwd);
   if (!sc) return null;
   const L = [];
@@ -232,6 +232,8 @@ export function brief(atlas, cwd, { now = Date.now(), donde = 'donde.mjs', maxCh
       L.push(`- ${pre}/ — ${parts.join(' · ')}`);
     }
   }
+  const withGraph = graphs ? [...graphs.roots()].filter((r) => inside(r, cwd) || inside(cwd, r)) : [];
+  if (withGraph.length) L.push(`Con grafo de código (Graphify, qué llama a qué): ${withGraph.map((r) => (r === cwd || inside(cwd, r) ? 'este proyecto' : r.slice(cwd.length + 1) + '/')).join(', ')}. Consulta con graphify query "<pregunta>" --graph ${withGraph.length === 1 && inside(cwd, withGraph[0]) ? '' : '<proyecto>/'}graphify-out/graph.json antes de abrir ficheros grandes.`);
   L.push(`Para una tarea concreta: node ${donde} "<tarea>" te dice por qué ficheros empezar.`);
   let out = L.join('\n');
   if (out.length > maxChars) out = out.slice(0, maxChars - 1) + '…';
@@ -242,9 +244,40 @@ export function brief(atlas, cwd, { now = Date.now(), donde = 'donde.mjs', maxCh
  * Pista para una tarea (UserPromptSubmit). Solo si hay algo claro: si no, nada (no gasta tokens).
  * Devuelve el texto y los ficheros sugeridos (para medir luego si acertó).
  */
-export function hint(atlas, cwd, prompt, { now = Date.now(), minConf = HINT_CONF } = {}) {
+/** ¿Pregunta u opinión sin nada que tocar? («qué opinas de…», «es de pago?»): ahí la pista solo gasta. */
+const ACTION = /\b(arregl|añad|anad|cambi|corrig|crea|haz|hazlo|pon|quit|mejor|implement|sub[ei]|mueve|borr|elimin|actualiz|integr|instal|configur|prueb|refactoriz|optimiz|falla|fallo|no funciona|no va|no sale|no carga|error|bug|roto)/i;
+export function isQuestion(text) {
+  const t = String(text).trim().toLowerCase();
+  if (ACTION.test(t)) return false;
+  return /\?\s*$/.test(t) || /^(qu[eé]|c[oó]mo|por qu[eé]|cu[aá]l|cu[aá]nto|crees|opinas|sabes|explica|dime|es de pago|tiene sentido)(?=[\s,.!?¿]|$)/.test(t.replace(/^¿/, ''));
+}
+
+/** Proyecto con grafo de código: dónde está el grafo y qué símbolos de un fichero encajan con la tarea. */
+const graphLine = (graphs, sc, files, text) => {
+  if (!graphs) return [];
+  const out = [];
+  const roots = new Set();
+  for (const rel of files.slice(0, 3)) {
+    const abs = sc.base + '/' + rel;
+    const root = [...graphs.roots()].filter((r) => abs.startsWith(r + '/')).sort((a, b) => b.length - a.length)[0];
+    if (!root) continue;
+    roots.add(root);
+    const syms = graphs.symbols(root, abs.slice(root.length + 1), text);
+    if (syms.length) out.push(`${basename(rel)} → ${syms.map((s) => `${s.label} (línea ${s.line})`).join(', ')}`);
+  }
+  const L = [];
+  if (out.length) L.push(`· Dentro, según el grafo de código: ${out.join('; ')}. Lee esas zonas, no el fichero entero.`);
+  for (const root of roots) {
+    const rel = root === sc.base ? '' : root.slice(sc.base.length + 1);
+    L.push(`· Para ver qué llama a qué: graphify query "<pregunta>" --graph ${rel ? rel + '/' : ''}graphify-out/graph.json --budget 800`);
+  }
+  return L;
+};
+
+export function hint(atlas, cwd, prompt, { now = Date.now(), minConf = HINT_CONF, graphs = null } = {}) {
   const text = String(prompt || '').trim();
   if (!text || text.startsWith('/') || text.startsWith('<')) return null;
+  if (isQuestion(text)) return null;
   if (tokenize(text).length < 2) return null;
   const sc = scope(atlas, cwd);
   if (!sc) return null;
@@ -258,6 +291,7 @@ export function hint(atlas, cwd, prompt, { now = Date.now(), minConf = HINT_CONF
   if (sim && sim.sim >= minConf) L.push(`· Parecida: ${day(sim.ts)} «${sim.text.slice(0, 80)}»${sim.files.length ? ' → ' + sim.files.slice(0, 3).map(basename).join(', ') : ''}`);
   const skills = [...new Set(r.similar.filter((s) => s.sim >= minConf).flatMap((s) => s.k || []))].slice(0, 2);
   if (skills.length) L.push(`· En tareas así se usó la skill: ${skills.join(', ')}`);
+  L.push(...graphLine(graphs, sc, files, text));
   const cmds = sc.mode === 'all' ? cmdsFor(r.cmds, files) : r.cmds;
   if (cmds.length) L.push(`· Se prueba con: ${cmds.slice(0, 2).map(([c]) => tidy(c)).join(' · ')}`);
   // lo aprendido en otro proyecto: una tarea muy parecida resuelta en otra región
@@ -319,8 +353,9 @@ export function savings(state, { now = Date.now(), days = 30 } = {}) {
       const k = Array.isArray(t.h) ? 'with' : 'without';
       g[k].n++; g[k].x += t.x || 0; g[k].c += t.c || 0;
       if (k === 'with') {
-        const edited = Object.entries(t.f || {}).filter(([, w]) => w >= EDIT_W).map(([f]) => f);
-        if (t.h.some((f) => edited.includes(f) || edited.some((e) => e.endsWith('/' + f) || f.endsWith('/' + e)))) g.with.hit++;
+        // las pistas se guardan con ruta absoluta; las ediciones, relativas a la carpeta de la sesión
+        const edited = Object.entries(t.f || {}).filter(([, w]) => w >= EDIT_W).map(([f]) => (p.cwd ? p.cwd + '/' + f : f));
+        if (t.h.some((f) => edited.includes(f) || edited.some((e) => e.endsWith('/' + f)))) g.with.hit++;
       }
     }
   }
@@ -329,8 +364,30 @@ export function savings(state, { now = Date.now(), days = 30 } = {}) {
   return { days, with: { ...w, hitRate: g.with.n ? g.with.hit / g.with.n : null }, without: wo, enough: g.with.n >= 5 && g.without.n >= 5 };
 }
 
-/** Resumen del atlas para la web: regiones, conexiones y las dos mediciones. */
-export function atlasSummary(atlas, state, { now = Date.now() } = {}) {
+/**
+ * Experimento antes/después en un proyecto (p. ej. instalar Graphify en lookit): tareas que acabaron
+ * editando, en los 30 días anteriores al cambio frente a lo que va después. Pasos de búsqueda antes de
+ * editar, pasos totales y coste por tarea; y en cuántas se usó de verdad la herramienta.
+ */
+export function experiment(atlas, exp, { now = Date.now(), days = 30 } = {}) {
+  const r = atlas.regions.get(exp.root);
+  const turns = (r?.turns || []).filter((t) => t.e);
+  const pack = (list) => {
+    const n = list.length;
+    const avg = (k) => (n ? list.reduce((a, t) => a + (t[k] || 0), 0) / n : null);
+    return { n, x: avg('x'), steps: avg('n'), c: avg('c'), used: list.filter((t) => t.g).length };
+  };
+  return {
+    ...exp,
+    project: r?.name || exp.root.split('/').pop(),
+    before: pack(turns.filter((t) => t.ts < exp.since && t.ts >= exp.since - days * 86400e3)),
+    after: pack(turns.filter((t) => t.ts >= exp.since && t.ts <= now)),
+    enough: turns.filter((t) => t.ts >= exp.since).length >= 5,
+  };
+}
+
+/** Resumen del atlas para la web: regiones, conexiones y las mediciones. */
+export function atlasSummary(atlas, state, { now = Date.now(), experiments = [] } = {}) {
   const regions = [...atlas.regions.values()].filter((r) => !r.umbrella).sort((a, b) => b.last - a.last).map((r) => ({
     root: r.root.replace(atlas.home, '~'), name: r.name, turns: r.turns.length, files: Object.keys(r.files).length, topics: r.topics || [],
     skills: Object.entries(r.skills).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k), last: r.last,
@@ -341,5 +398,6 @@ export function atlasSummary(atlas, state, { now = Date.now() } = {}) {
     connections: atlas.connections.slice(0, 20).map((c) => ({ a: name(c.a), b: name(c.b), why: c.why, w: c.w })),
     replay: evaluate(atlas),
     live: savings(state, { now }),
+    experiments: experiments.map((e) => experiment(atlas, e, { now })),
   };
 }

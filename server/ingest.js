@@ -12,7 +12,7 @@ const CACHE_VERSION = 10;
 const TURNS_MAX = 400;   // peticiones recordadas por proyecto para el mapa «dónde mirar»
 const FILES_MAX = 600;
 // carpetas generadas o de dependencias: no son «dónde mirar»
-export const JUNK_DIR = /(^|\/)(node_modules|\.git|dist|build|out|coverage|\.cache|\.next|\.nuxt|\.venv|venv|__pycache__|\.turbo|\.vercel|\.wrangler)\//;
+export const JUNK_DIR = /(^|\/)(node_modules|\.git|dist|build|out|coverage|\.cache|\.next|\.nuxt|\.venv|venv|__pycache__|\.turbo|\.vercel|\.wrangler|graphify-out)\//;
 const SLOT_MS = 10 * 60e3; // consumo en franjas de 10 min, para las ventanas del plan
 const SLOT_KEEP_MS = 45 * 86400e3;
 
@@ -583,6 +583,7 @@ export class Brain {
     const turn = this.openTurn.get(base.s);
     const edit = /^(Edit|Write|MultiEdit|NotebookEdit)$/.test(name);
     let explore = false;
+    if (name === 'Read' && /graphify-out\//.test(String(input.file_path || '')) && turn) turn.g = (turn.g || 0) + 1;
     if (name === 'Read' || edit) {
       const rel = this.relPath(p, String(input.file_path || input.notebook_path || ''));
       if (rel) {
@@ -598,6 +599,8 @@ export class Brain {
     } else if (name === 'Bash') {
       const cmd = String(input.command || '').replace(/^\s*cd\s+[^&;]+(&&|;)\s*/, '');
       if (/^\s*(ls|find|grep|rg|cat|head|tail|tree|wc|sed\s+-n|awk)\b/.test(cmd)) explore = true;
+      // consultas al grafo de código (Graphify): cuentan como búsqueda y marcan la petición para el experimento
+      if (/\bgraphify\s+(query|path|explain|affected|god-nodes)\b|graphify-out\/GRAPH_REPORT/.test(cmd)) { explore = true; if (turn) turn.g = (turn.g || 0) + 1; }
       // ficheros nombrados en la orden (sed -i, scripts, redirecciones…): también cuentan para el mapa
       const raw = String(input.command || '');
       // la terminal de Claude Code conserva el «cd» entre órdenes (si no sale de la carpeta del proyecto)

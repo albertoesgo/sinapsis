@@ -269,3 +269,26 @@ test('ingest: la terminal recuerda el cd entre órdenes', () => {
   assert.equal(normCmd('npm install three'), null);
   assert.equal(normCmd('.venv/bin/python /tmp/x.py'), null);
 });
+
+// ---------- Graphify: grafo de código, pistas con función y línea, y preguntas sin pista ----------
+import { isQuestion } from '../server/atlas.js';
+import { symbolsFor } from '../server/graph.js';
+
+test('hint: las preguntas puras no reciben pista; las tareas sí', () => {
+  assert.equal(isQuestion('Un amigo me ha comentado graphify, qué opinas? Es de pago?'), true);
+  assert.equal(isQuestion('qué tal estás'), true);
+  assert.equal(isQuestion('Arregla las tallas de cold culture'), false);
+  assert.equal(isQuestion('¿Por qué no carga el mapa?'), false); // describe un fallo: es tarea
+});
+
+test('graph: del español de la tarea a los símbolos en inglés del código', () => {
+  const w = (l) => tokenize(l.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[()_.-]+/g, ' '), 10).map(stem);
+  const g = { byFile: new Map([['src/lib/shopify.ts', [
+    { label: 'sortedSizes()', line: 294, deg: 5, w: w('sortedSizes()') },
+    { label: 'fetchProductDetail()', line: 401, deg: 9, w: w('fetchProductDetail()') },
+    { label: 'htmlToText()', line: 365, deg: 2, w: w('htmlToText()') },
+  ]]]) };
+  const s = symbolsFor(g, 'src/lib/shopify.ts', 'la talla única del producto');
+  assert.deepEqual(s.map((x) => x.line).sort(), [294, 401]);
+  assert.deepEqual(symbolsFor(g, 'otro.ts', 'talla'), []);
+});

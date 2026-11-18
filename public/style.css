@@ -750,3 +750,7 @@ h2 { letter-spacing: 0.1em; }
 .atl-conn b { font-weight: 500; color: var(--ink); }
 .atl-conn span { font-size: 12.5px; color: var(--faint); }
 .atl-conn small { color: var(--faint); font-size: 11px; }
+.atl-exp p { color: var(--muted); font-size: 12px; line-height: 1.45; margin: 12px 0 0; }
+.atl-exp p b { color: var(--ink); font-weight: 600; }
+.atl-ab { margin-top: 8px; }
+.atl-ab span b { color: var(--ink); }
