@@ -12,6 +12,7 @@ import { Brain } from '../server/ingest.js';
 import { buildDemo } from '../server/demo.js';
 import { weeklyReport } from '../server/report.js';
 import { manifest, folderVersion } from '../server/manifest.js';
+import { buildAtlas, atlasSummary } from '../server/atlas.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'dist');
@@ -58,6 +59,7 @@ fs.writeFileSync(path.join(OUT, 'demo', 'snapshot.json'), JSON.stringify(snapsho
 fs.writeFileSync(path.join(OUT, 'demo', 'report.json'), JSON.stringify(report));
 fs.writeFileSync(path.join(OUT, 'demo', 'events.json'), JSON.stringify(events));
 // «dónde mirar» en el navegador: el mapa sintético de cada proyecto y el mismo código que usa el servidor
+fs.writeFileSync(path.join(OUT, 'demo', 'atlas.json'), JSON.stringify({ ...atlasSummary(buildAtlas(brain.s, { home: '/demo' }), brain.s), demo: true }));
 fs.writeFileSync(path.join(OUT, 'demo', 'maps.json'), JSON.stringify(Object.fromEntries(Object.values(brain.s.projects).map((p) => [p.key, { files: p.files, turns: p.turns, cmds: p.cmds }]))));
 fs.copyFileSync(path.join(ROOT, 'server', 'where.js'), path.join(OUT, 'js', 'where.js'));
 

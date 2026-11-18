@@ -8,7 +8,7 @@ import { scanInventory } from './inventory.js';
 import { planStatus } from './plan.js';
 import { tokenize, projectMap } from './where.js';
 
-const CACHE_VERSION = 9;
+const CACHE_VERSION = 10;
 const TURNS_MAX = 400;   // peticiones recordadas por proyecto para el mapa «dónde mirar»
 const FILES_MAX = 600;
 const SLOT_MS = 10 * 60e3; // consumo en franjas de 10 min, para las ventanas del plan
@@ -59,6 +59,8 @@ export function normCmd(cmd) {
     out.push(t);
   }
   if (out.length < 2 || !RUNNER.test(out[0])) return null;
+  // ni instalaciones ni scripts temporales: el mapa guarda cómo se prueba y se ejecuta el proyecto
+  if (/^(install|i|ci|add|remove|uninstall|update|upgrade|init|create|exec|-m)$/.test(out[1]) || out.some((t) => /^\/(tmp|private|var)\//.test(t))) return null;
   if (/^(bash|sh)$/.test(out[0]) && !/\.sh$/.test(out[1])) return null;
   return out.join(' ');
 }
@@ -144,6 +146,8 @@ export class Brain {
     this.inventory = { skills: {}, agents: {}, memory: {} };
     this.home = os.homedir();
     this.openTurn = new Map(); // sesión → petición en curso (para saber qué ficheros sirvieron para qué)
+    this.readings = []; // lecturas reales del % del plan (server/usage.js)
+    this.hints = new Map(); // sesión → pistas que Sinapsis le dio a Claude (para medir si ahorran)
   }
 
   // ---------- persistencia ----------
@@ -417,6 +421,8 @@ export class Brain {
         if (d.effort && !agentType) inc(dd.effort, d.effort);
       }
       if (!agentType) this.trackContext(s, p, tok, ts);
+      const turn = this.openTurn.get(base.s);
+      if (turn) turn.c = (turn.c || 0) + cost; // coste de la petición, subagentes incluidos
       this.edge(fromNode, modelNode, ts);
       const ev = { ...base, k: 'thought', m: model, u: [tok.in, tok.cr, tok.cw, tok.out, tok.th], c: cost, e: d.effort || null, td: d.thinkingDurationMs || null, stop: m.stop_reason || null };
       if (!base.a && (!this.s.lastThought || ts >= this.s.lastThought.ts)) {
@@ -517,6 +523,8 @@ export class Brain {
       detail = parts.slice(2).join(' ');
     } else if (name === 'Skill') {
       const sk = this.useSkill(input.skill || input.command || '?', p, ts, true);
+      const turn = this.openTurn.get(base.s);
+      if (turn && !(turn.k ||= []).includes(sk)) turn.k.push(sk); // qué skills sirvieron para qué tareas
       target = 'skill:' + sk;
       detail = sk;
     } else if (name === 'Agent' || name === 'Task') {
@@ -590,12 +598,20 @@ export class Brain {
       if (/^\s*(ls|find|grep|rg|cat|head|tail|tree|wc|sed\s+-n|awk)\b/.test(cmd)) explore = true;
       // ficheros nombrados en la orden (sed -i, scripts, redirecciones…): también cuentan para el mapa
       const raw = String(input.command || '');
-      const dir = raw.match(/^\s*cd\s+([^\s&;]+)/)?.[1]?.replace(/^~(?=\/|$)/, this.home).replace(/^["']|["']$/g, '');
+      // la terminal de Claude Code conserva el «cd» entre órdenes (si no sale de la carpeta del proyecto)
+      const ss = this.s.sessions[base.s];
+      let at = ss?.sh && p.cwd && (ss.sh === p.cwd || ss.sh.startsWith(p.cwd + '/')) ? ss.sh : p.cwd;
+      const cd = raw.match(/^\s*cd\s+("[^"]+"|'[^']+'|[^\s&;]+)\s*(?:&&|;|$)/)?.[1];
+      if (cd && p.cwd) {
+        const to = path.resolve(at || p.cwd, cd.replace(/^["']|["']$/g, '').replace(/^~(?=\/|$)/, this.home));
+        at = to === p.cwd || to.startsWith(p.cwd + '/') ? to : p.cwd;
+        if (ss) ss.sh = at;
+      }
+      const dir = at && at !== p.cwd ? at : null;
       if (!explore) {
         const k = normCmd(cmd);
         // la orden se apunta con la subcarpeta donde se ejecutó («sinapsis\tnpm test»)
-        const at = dir && p.cwd ? path.resolve(p.cwd, dir) : null;
-        const relDir = at && at.startsWith(p.cwd + '/') ? at.slice(p.cwd.length + 1) : '';
+        const relDir = dir && dir.startsWith(p.cwd + '/') ? dir.slice(p.cwd.length + 1) : '';
         if (k) { const key = relDir ? `${relDir}\t${k}` : k; p.cmds[key] = (p.cmds[key] || 0) + 1; }
       }
       for (const tok of pathTokens(raw)) {
@@ -609,7 +625,28 @@ export class Brain {
         if (turn) { turn.f[rel] = (turn.f[rel] || 0) + (ed ? 2 : 0.5); if (ed) turn.e = true; }
       }
     }
-    if (turn) { turn.n++; if (explore && !turn.e) turn.x++; }
+    if (turn) { turn.n++; if (explore && !turn.e) turn.x++; if (turn.h === undefined) this.attachHint(turn); }
+  }
+
+  /** Apunta una pista que Sinapsis dio a Claude (lo llama el servidor al responder al hook). */
+  noteHint(h) {
+    const list = this.hints.get(h.sid) || [];
+    list.push(h);
+    if (list.length > 20) list.shift();
+    this.hints.set(h.sid, list);
+    const turn = this.openTurn.get(h.sid);
+    if (turn && turn.h === undefined) this.attachHint(turn);
+  }
+
+  /** Une la petición con la pista que recibió (misma sesión, casi el mismo momento). */
+  attachHint(turn) {
+    const list = this.hints.get(turn.s);
+    if (!list) return;
+    const i = list.findIndex((h) => Math.abs(h.ts - turn.ts) < 120e3);
+    if (i < 0) return;
+    const [h] = list.splice(i, 1);
+    turn.h = h.files || [];
+    this.dirty = true;
   }
 
   relPath(p, fp) {
@@ -654,6 +691,7 @@ export class Brain {
       (p.turns ||= []).push(turn);
       if (p.turns.length > TURNS_MAX) p.turns.splice(0, p.turns.length - TURNS_MAX);
       this.openTurn.set(s.id, turn);
+      this.attachHint(turn);
     }
     if (base.ts) { const dd = this.dayEntry(base.ts); dd.prompts++; inc(dd.byProjectPrompts, p.key); }
     this.edge('input', 'session:' + s.id, base.ts);
@@ -719,7 +757,7 @@ export class Brain {
       recent: recent ? s.recent.filter((e) => e.ts > now - RECENT_MS).slice(-6000) : undefined,
       recentCount: s.recent.filter((e) => e.ts > now - RECENT_MS).length,
       liveSessions: [...this.liveSessions],
-      plan: planStatus(s, now),
+      plan: planStatus(s, now, this.readings),
     };
   }
 }

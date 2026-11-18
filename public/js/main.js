@@ -286,8 +286,11 @@ async function load() {
 }
 const api = (path) => (STATIC ? Static.api(path) : fetch(path).then((r) => (r.ok ? r.json() : null)));
 
+const post = (path, body) => (STATIC ? Promise.resolve(null) : fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => (r.ok ? r.json() : null)).catch(() => null));
+
 const hud = new Hud({
   api: (path) => api(path),
+  post: (path, body) => post(path, body),
   onFocus: (id, opts) => focusNode(id, opts),
   onReplay: (events) => replay(events),
   onToggleRotate: (v) => { rotateOn = v; if (!focused) controls.autoRotate = v; },

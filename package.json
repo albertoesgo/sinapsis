@@ -1,6 +1,6 @@
 {
   "name": "sinapsis",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Un cerebro 3D en tiempo real que muestra la actividad real de Claude Code: proyectos, sesiones, modelos, herramientas, skills, subagentes y consumo.",
   "type": "module",
   "main": "server/index.js",
@@ -14,7 +14,9 @@
     "lint": "eslint .",
     "check": "npm run lint && npm test",
     "donde": "node scripts/donde.mjs",
-    "skill:install": "bash scripts/install-skill.sh"
+    "skill:install": "bash scripts/install-skill.sh",
+    "hooks:install": "node scripts/install-hooks.mjs",
+    "hooks:remove": "node scripts/install-hooks.mjs --remove"
   },
   "engines": {
     "node": ">=20"

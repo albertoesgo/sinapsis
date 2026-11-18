@@ -9,6 +9,7 @@ Buscar a ciegas (Glob, Grep, abrir ficheros enteros «por si acaso») es lo que 
 
 ## Cómo usarlo
 
+0. **Si en el contexto ya hay un bloque «[Sinapsis]»** (lo añade el hook al abrir o compactar la sesión y al escribir una tarea con pista clara), úsalo directamente: no repitas la consulta. Si la tarea es de un proyecto concreto y el bloque no la cubre, sigue con el paso 1.
 1. **Antes de explorar**, con la tarea resumida en pocas palabras:
    ```bash
    node __SINAPSIS__/scripts/donde.mjs --dir "$PWD" "<la tarea>"

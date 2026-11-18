@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { projectMap } from './where.js';
+import { buildAtlas, asProject, related } from './atlas.js';
 
 const ZONES = {
   plan: { name: 'Corteza prefrontal', fn: 'planificar y razonar', why: 'planificación, decisiones y razonamiento' },
@@ -66,8 +67,11 @@ function cost30(state, key) {
   return c;
 }
 
-export function buildVault(state, inventory = {}, dir = path.join(os.homedir(), '.sinapsis', 'vault')) {
+export function buildVault(state, inventory = {}, dir = path.join(os.homedir(), '.sinapsis', 'vault'), { atlas = buildAtlas(state, { home: os.homedir() }) } = {}) {
   const files = new Map(); // ruta relativa → contenido
+  // el atlas reparte lo hecho desde carpetas paraguas (p. ej. ~/Proyectos) en su proyecto real
+  const regionOf = (p) => { const r = p.cwd && atlas.regions.get(p.cwd); return r && !r.umbrella ? r : null; };
+  const relLinks = (root) => related(atlas, root, 5).map((x) => `${link('Proyectos', x.name, x.name)} (${x.why.join(', ')})`);
   const projects = Object.values(state.projects || {}).filter((p) => p.name && (p.prompts || p.msgs)).sort((a, b) => b.last - a.last);
   const zone = zones(projects);
   const sessions = Object.values(state.sessions || {});
@@ -76,7 +80,8 @@ export function buildVault(state, inventory = {}, dir = path.join(os.homedir(), 
 
   // ---------- proyectos ----------
   for (const p of projects) {
-    const m = projectMap(p, { files: 15, cmds: 8, tasks: 10 });
+    const reg = regionOf(p);
+    const m = projectMap(reg ? asProject(reg) : p, { files: 15, cmds: 8, tasks: 10 });
     const z = zone.get(p.key);
     const zn = ZONES[z.main];
     const ss = sessions.filter((s) => s.project === p.key && s.mainMsgs);
@@ -91,8 +96,15 @@ export function buildVault(state, inventory = {}, dir = path.join(os.homedir(), 
     const nS = Object.keys(p.sessions || {}).length;
     L.push(`**Actividad:** ${p.prompts} ${p.prompts === 1 ? 'petición' : 'peticiones'} · ${nS} ${nS === 1 ? 'sesión' : 'sesiones'} · última ${day(p.last)} · consumo en 30 días ≈ ${usd(cost30(state, p.key))} (equivalente API).  `);
     if (m.explore != null) L.push(`**Búsqueda antes de editar:** ${nf(m.explore)} pasos de media${m.exploreShare != null ? ` (${Math.round(m.exploreShare * 100)} % de los pasos)` : ''}.  `);
-    if (avgCtx) L.push(`**Contexto medio por paso:** ${Math.round(avgCtx / 1000)} k tokens.`);
+    if (avgCtx) L.push(`**Contexto medio por paso:** ${Math.round(avgCtx / 1000)} k tokens.  `);
+    if (reg?.topics?.length) L.push(`**Temas:** ${reg.topics.join(', ')}.`);
     L.push('');
+    const subs = [...atlas.regions.values()].filter((r) => !r.umbrella && p.cwd && r.root.startsWith(p.cwd + '/'));
+    if (atlas.umbrella.includes(p.cwd) && subs.length) {
+      L.push('## Contiene', '', 'Carpeta paraguas: lo que se hace desde aquí se reparte en el proyecto de cada subcarpeta.', '');
+      for (const r of subs.sort((a, b) => b.last - a.last)) L.push(`- ${link('Proyectos', r.name, r.name)} · \`${r.root.slice(p.cwd.length + 1)}/\` · ${r.turns.length} tareas`);
+      L.push('');
+    }
 
     L.push('## Dónde mirar', '');
     if (m.hot.length) {
@@ -118,6 +130,7 @@ export function buildVault(state, inventory = {}, dir = path.join(os.homedir(), 
     if (ag.length) conn.push(`- **Subagentes:** ${ag.map(([k, n]) => `${k} ×${n}`).join(' · ')}`);
     const memDir = path.join(os.homedir(), '.claude', 'projects', p.key, 'memory');
     if (fs.existsSync(memDir)) conn.push(`- **Memoria:** \`${memDir.replace(os.homedir(), '~')}\` (${link('Zonas', 'Hipocampo', 'hipocampo')})`);
+    if (reg) { const rl = relLinks(reg.root); if (rl.length) conn.unshift(`- **Proyectos:** ${rl.join(' · ')}`); }
     if (conn.length) L.push('## Conectado con', '', ...conn, '');
 
     // consejos concretos para gastar menos
@@ -129,6 +142,33 @@ export function buildVault(state, inventory = {}, dir = path.join(os.homedir(), 
     if (tips.length) L.push('## Para gastar menos tokens', '', ...tips.map((t) => `- ${t}`), '');
 
     files.set(`Proyectos/${safe(p.name)}.md`, L.join('\n'));
+  }
+
+  // ---------- proyectos que solo se tocan desde una carpeta paraguas ----------
+  const own = new Set(projects.map((p) => p.cwd));
+  const virtual = [...atlas.regions.values()].filter((r) => !r.umbrella && !own.has(r.root) && (r.turns.length || Object.keys(r.files).length)).sort((a, b) => b.last - a.last);
+  for (const r of virtual) {
+    const m = projectMap(asProject(r), { files: 15, cmds: 8, tasks: 10 });
+    const L = ['---', 'tipo: proyecto', `ruta: "${r.root}"`, `peticiones: ${r.turns.length}`, `ultima: ${iso(r.last)}`, 'tags: [sinapsis/proyecto]', '---', '',
+      `# ${r.name}`, '', '> Proyecto que se trabaja desde una carpeta paraguas. Mapa generado por Sinapsis con el historial real de Claude Code.', ''];
+    if (r.topics?.length) L.push(`**Temas:** ${r.topics.join(', ')}.  `);
+    if (m.explore != null) L.push(`**Búsqueda antes de editar:** ${nf(m.explore)} pasos de media.`);
+    L.push('', '## Dónde mirar', '');
+    if (m.hot.length) {
+      L.push('| Fichero | Líneas | Lecturas | Ediciones | Última vez |', '|---|---:|---:|---:|---|');
+      for (const h of m.hot) L.push(`| \`${md(h.rel)}\` | ${lines(path.join(r.root, h.rel)) ?? '—'} | ${h.r} | ${h.e} | ${day(h.last)} |`);
+    } else L.push('Aún no hay ficheros registrados.');
+    L.push('', `Para una tarea concreta: \`node ~/Proyectos/sinapsis/scripts/donde.mjs --dir "${r.root}" "<tarea>"\``, '');
+    if (m.cmds.length) { L.push('## Cómo se ejecuta', ''); for (const [c, n] of m.cmds) L.push(`- \`${c}\` ×${n}`); L.push(''); }
+    if (m.recent.length) { L.push('## Tareas recientes', ''); for (const t of m.recent) L.push(`- ${day(t.ts)} · «${md(t.text)}»${t.files.length ? ' → ' + t.files.map((f) => `\`${f}\``).join(', ') : ''}`); L.push(''); }
+    const conn = [];
+    const rl = relLinks(r.root);
+    if (rl.length) conn.push(`- **Proyectos:** ${rl.join(' · ')}`);
+    const sk = Object.entries(r.skills).sort((a, b) => b[1] - a[1]);
+    if (sk.length) conn.push(`- **Skills:** ${sk.map(([k, n]) => `${link('Skills', k, k)} ×${n}`).join(' · ')}`);
+    for (const [k, n] of sk) { if (!skillsUse.has(k)) skillsUse.set(k, {}); skillsUse.get(k)[r.name] = (skillsUse.get(k)[r.name] || 0) + n; }
+    if (conn.length) L.push('## Conectado con', '', ...conn, '');
+    files.set(`Proyectos/${safe(r.name)}.md`, L.join('\n'));
   }
 
   // ---------- skills ----------
@@ -173,7 +213,12 @@ export function buildVault(state, inventory = {}, dir = path.join(os.homedir(), 
     const zn = ZONES[zone.get(p.key).main];
     I.push(`| ${link('Proyectos', p.name, p.name)} | ${link('Zonas', zn.name, zn.name)} | ${p.prompts} | ${m.explore != null ? nf(m.explore) + ' pasos' : '—'} | ${day(p.last)} |`);
   }
-  I.push('', '## Cómo lo usa Claude', '', '- La skill **contexto-proyectos** consulta este mapa antes de explorar un proyecto y va directa a los ficheros.', '- A mano: `node ~/Proyectos/sinapsis/scripts/donde.mjs "<tarea>"` desde la carpeta del proyecto, o `--mapa` para el resumen.', '');
+  for (const r of virtual) {
+    const m = projectMap(asProject(r), { files: 0, cmds: 0, tasks: 0 });
+    I.push(`| ${link('Proyectos', r.name, r.name)} | — | ${r.turns.length} | ${m.explore != null ? nf(m.explore) + ' pasos' : '—'} | ${day(r.last)} |`);
+  }
+  I.push('', '## Cómo lo usa Claude', '', '- Al abrir o compactar una sesión, el hook de Sinapsis le da a Claude un resumen de dónde está cada cosa; al escribir una tarea, le sugiere por qué ficheros empezar si hay una pista clara.',
+    '- La skill **contexto-proyectos** consulta este mapa antes de explorar un proyecto y va directa a los ficheros.', '- A mano: `node ~/Proyectos/sinapsis/scripts/donde.mjs "<tarea>"` desde la carpeta del proyecto, o `--mapa` para el resumen.', '');
   files.set('Inicio.md', I.join('\n'));
 
   // ---------- escribir solo lo que cambia y retirar notas viejas ----------

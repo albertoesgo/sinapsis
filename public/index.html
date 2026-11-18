@@ -13,7 +13,6 @@
   <link rel="apple-touch-icon" href="icon-180.png" />
   <title>Sinapsis · el sistema nervioso de Claude Code</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='5' fill='%23ffcf8a'/><circle cx='16' cy='16' r='11' fill='none' stroke='%236fd3ff' stroke-width='1.5' opacity='.6'/></svg>" />
-  <link rel="preload" href="fonts/newsreader.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="style.css" />
   <script type="importmap">
     { "imports": { "three": "./vendor/three/build/three.module.js", "three/addons/": "./vendor/three/examples/jsm/" } }
@@ -52,6 +51,10 @@
   <aside id="left" class="panel">
     <section class="card" data-card="plan" id="plan">
       <header><h2>Tu plan</h2><span class="aside" id="plan-aside"></span><button class="fold" title="Plegar"></button></header>
+      <div class="body"></div>
+    </section>
+    <section class="card" data-card="atlas" id="atlas" hidden>
+      <header><h2>Memoria común</h2><span class="aside" id="atlas-aside"></span><button class="fold" title="Plegar"></button></header>
       <div class="body"></div>
     </section>
     <section class="card" data-card="metab" id="metab">

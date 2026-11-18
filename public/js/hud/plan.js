@@ -1,6 +1,9 @@
 // Tu plan (ventana de 5 h y semana), «Ahora mismo» y el vistazo del móvil.
-import { isMobile } from '../ui.js';
+import { isMobile, STATIC } from '../ui.js';
 import { $, $$, CTX, LIVE_MS, esc, hm, inTime, levelOf, money, pctTxt, tok, wday } from './format.js';
+
+const SRC = { 'claude-code': 'línea de estado de Claude Code', manual: 'lo escribiste tú', anthropic: 'consulta a Anthropic' };
+const ago = (ts) => { const m = Math.round((Date.now() - ts) / 60e3); return m < 1 ? 'ahora' : m < 60 ? `hace ${m} min` : m < 1440 ? `hace ${Math.round(m / 60)} h` : `hace ${Math.round(m / 1440)} d`; };
 
 export const planMethods = {
   // ---------- tu plan ----------
@@ -23,8 +26,9 @@ export const planMethods = {
     };
     const sub5 = h5.end ? `se reinicia a las ${hm(h5.end)}<br>${inTime(h5.end)}` : 'sin ventana abierta<br>empieza al escribir';
     const subW = week.end ? `se reinicia el ${wday(week.end)}<br>${inTime(week.end)}` : 'últimos 7 días';
-    const tip5 = h5.budget ? `≈${money(h5.used)} de ≈${money(h5.budget)} equivalentes (estimado con ${h5.samples} cortes reales)` : `${money(h5.used)} en esta ventana · aún no has llegado nunca al límite de 5 h`;
-    const tipW = week.budget ? `≈${money(week.used)} de ≈${money(week.budget)} equivalentes (estimado con ${week.samples} corte${week.samples === 1 ? '' : 's'} real${week.samples === 1 ? '' : 'es'})` : `${money(week.used)} esta semana`;
+    const realTip = (w) => `Dato real de Anthropic: ${Math.round(w.real.pct * 100)} % a las ${hm(w.real.ts)} (${SRC[w.real.src] || w.real.src}), más lo gastado en este Mac desde entonces`;
+    const tip5 = h5.real ? realTip(h5) : h5.budget ? `≈${money(h5.used)} de ≈${money(h5.budget)} equivalentes (estimado con ${h5.samples} cortes reales)` : `${money(h5.used)} en esta ventana · aún no has llegado nunca al límite de 5 h`;
+    const tipW = week.real ? realTip(week) : week.budget ? `≈${money(week.used)} de ≈${money(week.budget)} equivalentes (estimado con ${week.samples} corte${week.samples === 1 ? '' : 's'} real${week.samples === 1 ? '' : 'es'})` : `${money(week.used)} esta semana`;
 
     // veredicto: una frase con lo que importa
     let v, lvl;
@@ -45,12 +49,29 @@ export const planMethods = {
       return `<i class="${w.hit ? 'hit' : ''} ${cur ? 'cur' : ''}" style="height:${Math.max(4, Math.min(100, (w.used / ref) * 100))}%" title="${new Date(w.start).toLocaleString('es-ES', { weekday: 'short', hour: '2-digit', minute: '2-digit' })} · ${money(w.used)}${w.hit ? ' · llegaste al límite' : ''}"></i>`;
     }).join('');
     const hits = wins.some((w) => w.hit);
-    $('#plan-aside').textContent = h5.budget ? 'estimado con tus cortes reales' : '';
+    const real = [h5.real, week.real].filter(Boolean).sort((a, b) => b.ts - a.ts)[0];
+    $('#plan-aside').textContent = real ? `dato real · ${ago(real.ts)}` : h5.budget || week.budget ? 'estimado' : '';
     $('.body', card).innerHTML = `
       <div class="rings">${ring('Ventana de 5 h', h5, sub5, tip5)}${ring('Semana', week, subW, tipW)}</div>
       <div class="verdict g-${lvl}">${v}</div>
       ${wins.length ? `<div class="wins g-${levelOf(p5)}">${bars}</div><div class="wins-cap"><span>tus últimas ventanas de 5 h</span><span>${hits ? `<span style="color:var(--bad)">■</span> llegaste al límite` : ''}</span></div>` : ''}
-      <p class="plan-note">Estimación: lo que habías consumido justo antes de cada corte real${h5.samples || week.samples ? ` (${h5.samples} de 5 h, ${week.samples} semanal${week.samples === 1 ? '' : 'es'})` : ''}. Si usas Claude en la web o el móvil, también cuenta y aquí no se ve.</p>`;
+      <p class="plan-note">${real
+        ? `Parte del <b>dato real</b> que dio Anthropic a las ${hm(real.ts)} (${SRC[real.src] || real.src}) y suma lo que gastas en este Mac desde entonces. Lo de la web o el móvil se verá en la próxima lectura.`
+        : `Estimación con lo consumido antes de cada corte real${h5.samples || week.samples ? ` (${h5.samples} de 5 h, ${week.samples} semanal${week.samples === 1 ? '' : 'es'})` : ''}. No ve lo que gastas en la web o el móvil.`}
+        ${STATIC ? '' : '<button class="calib">¿No cuadra con Claude → Uso? Corrígelo</button>'}</p>
+      <form class="calib-form" hidden>
+        <label>5 h <input name="h5" inputmode="decimal" placeholder="${h5.pct != null ? Math.round(h5.pct * 100) : '—'}" /> %</label>
+        <label>Semana <input name="week" inputmode="decimal" placeholder="${week.pct != null ? Math.round(week.pct * 100) : '—'}" /> %</label>
+        <button type="submit">Guardar</button>
+      </form>`;
+    const btn = $('.calib', card), form = $('.calib-form', card);
+    if (btn) btn.onclick = () => { form.hidden = !form.hidden; if (!form.hidden) $('input', form).focus(); };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const r = await this.cb.post?.('api/usage', { h5: fd.get('h5'), week: fd.get('week') });
+      if (r?.plan) { this.snap.plan = r.plan; this.renderPlan(); this.renderNow(); }
+    };
   },
 
   /** Suma en vivo el consumo de cada respuesta al plan, sin esperar a la siguiente instantánea. */

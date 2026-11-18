@@ -17,6 +17,8 @@ import { planStatus } from './plan.js';
 import { manifest, folderVersion } from './manifest.js';
 import { buildVault } from './vault.js';
 import { findProject, where } from './where.js';
+import { buildAtlas, brief, hint, atlasSummary } from './atlas.js';
+import { USAGE_FILE, readReadings, addReading, manualReading, pollAnthropic } from './usage.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -108,6 +110,40 @@ const brain = new Brain({
   onAlert: raise,
 });
 
+// ---------- uso real del plan (lecturas en ~/.sinapsis/usage.json) ----------
+let usageMtime = 0;
+function refreshReadings(force = false) {
+  let m = 0;
+  try { m = fs.statSync(USAGE_FILE).mtimeMs; } catch { /* aún no hay */ }
+  if (!force && m === usageMtime) return false;
+  usageMtime = m;
+  brain.readings = readReadings();
+  return true;
+}
+
+// ---------- atlas: el mapa común de todos los proyectos, para darle contexto a Claude ----------
+const HINTS_FILE = path.join(os.homedir(), '.sinapsis', 'hints.jsonl');
+const DONDE = path.join(ROOT, 'scripts', 'donde.mjs').replace(os.homedir(), '~');
+let atlasCache = null;
+function atlas() {
+  const mark = vaultMark();
+  if (!atlasCache || atlasCache.mark !== mark || Date.now() - atlasCache.at > 60e3) atlasCache = { mark, at: Date.now(), a: buildAtlas(brain.s, { home: os.homedir() }) };
+  return atlasCache.a;
+}
+function loadHints() {
+  try {
+    for (const line of fs.readFileSync(HINTS_FILE, 'utf8').split('\n')) { if (line) { try { brain.noteHint(JSON.parse(line)); } catch { /* línea rota */ } } }
+  } catch { /* aún no hay */ }
+}
+function readBody(req, max = 64e3) {
+  return new Promise((resolve) => {
+    let b = '';
+    req.on('data', (c) => { b += c; if (b.length > max) req.destroy(); });
+    req.on('end', () => { try { resolve(JSON.parse(b || '{}')); } catch { resolve(null); } });
+    req.on('error', () => resolve(null));
+  });
+}
+
 const VAULT_DIR = path.join(os.homedir(), '.sinapsis', 'vault');
 let vaultInfo = null;
 let lastVaultMark = '';
@@ -123,6 +159,8 @@ function boot() {
     return;
   }
   const cached = brain.load();
+  loadHints(); // las pistas que ya se dieron, para unirlas a sus peticiones al releer el historial
+  refreshReadings(true);
   brain.scan();
   brain.refreshInventory();
   brain.refreshLiveSessions();
@@ -134,6 +172,9 @@ function boot() {
   setInterval(() => { try { brain.scan(); } catch (e) { console.error('scan', e.message); } }, 1200);
   setInterval(() => { if (brain.refreshLiveSessions()) broadcast('topology', { at: Date.now() }); }, 4000);
   setInterval(() => brain.refreshInventory(), 60000);
+  // lecturas reales del plan: la línea de estado las escribe en usage.json; si cambian, se avisa a la web
+  setInterval(() => { if (refreshReadings()) broadcast('topology', { at: Date.now() }); }, 5000);
+  if (config.usoReal) pollAnthropic({ onReading: (r) => { if (addReading(r)) { refreshReadings(); broadcast('topology', { at: Date.now() }); } }, log: (m) => console.log('· ' + m) });
   // Informe semanal (por defecto, lunes a las 9:00) y recarga de la configuración
   setInterval(() => {
     config = loadConfig();
@@ -152,7 +193,7 @@ function boot() {
   const vault = () => {
     if (!config.vault) return;
     try {
-      const r = buildVault(brain.s, brain.inventory, config.vaultDir || VAULT_DIR);
+      const r = buildVault(brain.s, brain.inventory, config.vaultDir || VAULT_DIR, { atlas: atlas() });
       vaultInfo = { ...r, at: Date.now() };
       lastVaultMark = vaultMark();
     } catch (e) { console.error('vault', e.message); }
@@ -162,7 +203,7 @@ function boot() {
   rebuildVault = vault;
   // Avisos del plan: al pasar del 75 % y del 90 % del presupuesto estimado de la ventana de 5 h o de la semana
   setInterval(() => {
-    const pl = planStatus(brain.s);
+    const pl = planStatus(brain.s, Date.now(), brain.readings);
     const hhmm = (t) => new Date(t).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
     const check = (w, key, name) => {
       if (!w.pct || !w.start) return;
@@ -172,7 +213,7 @@ function boot() {
       if (!lvl || (brain.s.planAlerted[id] || 0) >= lvl) return;
       brain.s.planAlerted[id] = lvl; brain.dirty = true;
       const when = w.end ? ` Se reinicia ${key === 'week' ? new Date(w.end).toLocaleDateString('es-ES', { weekday: 'long' }) + ' a las ' : 'a las '}${hhmm(w.end)}.` : '';
-      raise({ kind: 'plan', ts: Date.now(), level: lvl, title: `Llevas ≈${Math.round(w.pct * 100)} % de ${name}`, body: `Estimación según tus cortes anteriores.${when}${w.eta ? ` Al ritmo actual llegarías al límite hacia las ${hhmm(w.eta)}.` : ''}` });
+      raise({ kind: 'plan', ts: Date.now(), level: lvl, title: `Llevas ${w.real ? '' : '≈'}${Math.round(w.pct * 100)} % de ${name}`, body: `${w.real ? 'Según tu último dato real de Anthropic.' : 'Estimación según tus cortes anteriores.'}${when}${w.eta ? ` Al ritmo actual llegarías al límite hacia las ${hhmm(w.eta)}.` : ''}` });
     };
     check(pl.h5, 'h5', 'tu ventana de 5 horas');
     check(pl.week, 'week', 'tu límite semanal');
@@ -242,6 +283,46 @@ const server = http.createServer((req, res) => {
     const proj = findProject(brain.s, url.searchParams.get('p') || '');
     if (!proj) { sendJson(req, res, { error: 'proyecto desconocido' }); return; }
     sendJson(req, res, { project: proj.name, ...where(proj, url.searchParams.get('q') || '', { limit: 8 }) });
+    return;
+  }
+  if (p === '/api/context') {
+    // lo llama el hook de Claude Code (scripts/hook.mjs): solo desde este ordenador
+    if (!isLoopback(req) || req.method !== 'POST') { res.writeHead(403).end(); return; }
+    readBody(req).then((b) => {
+      if (!b || DEMO) { sendJson(req, res, {}); return; }
+      const cwd = String(b.cwd || ''), sid = String(b.sid || '');
+      if (b.ev === 'start') { sendJson(req, res, { text: brief(atlas(), cwd, { donde: DONDE }) }); return; }
+      const h = hint(atlas(), cwd, String(b.prompt || '').slice(0, 4000));
+      if (h && sid) {
+        const rec = { ts: Date.now(), sid, cwd, files: h.files, conf: Math.round(h.conf * 100) / 100 };
+        brain.noteHint(rec);
+        fs.appendFile(HINTS_FILE, JSON.stringify(rec) + '\n', () => {});
+      }
+      sendJson(req, res, { text: h?.text || null });
+    });
+    return;
+  }
+  if (p === '/api/atlas') {
+    let hooks = false;
+    try { hooks = fs.readFileSync(path.join(CLAUDE_DIR, 'settings.json'), 'utf8').includes('scripts/hook.mjs'); } catch { /* sin ajustes */ }
+    sendJson(req, res, { ...atlasSummary(atlas(), brain.s), hooks, demo: DEMO });
+    return;
+  }
+  if (p === '/api/usage') {
+    if (req.method === 'POST') {
+      // calibración a mano. Solo JSON: obliga a una comprobación previa (CORS) que nunca se aprueba desde otra web
+      if (!/^application\/json/.test(req.headers['content-type'] || '')) { res.writeHead(415).end(); return; }
+      readBody(req, 2000).then((b) => {
+        if (!b) { res.writeHead(400).end(); return; }
+        const r = manualReading(b, brain.snapshot({ recent: false }).plan);
+        const ok = addReading(r);
+        refreshReadings(true);
+        broadcast('topology', { at: Date.now() });
+        sendJson(req, res, { ok, plan: brain.snapshot({ recent: false }).plan });
+      });
+      return;
+    }
+    sendJson(req, res, { readings: brain.readings.slice(-20), usoReal: !!config.usoReal });
     return;
   }
   if (p === '/api/vault') {

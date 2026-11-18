@@ -10,7 +10,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { findProject, projectMap, where } from '../server/where.js';
+import { projectMap, where } from '../server/where.js';
+import { buildAtlas, scope, cmdsFor } from '../server/atlas.js';
 
 const args = process.argv.slice(2);
 const flag = (n) => { const i = args.indexOf(n); if (i < 0) return null; const v = args[i + 1]; args.splice(i, v && !v.startsWith('--') ? 2 : 1); return v && !v.startsWith('--') ? v : true; };
@@ -29,16 +30,16 @@ function bail(msg) {
 
 let state;
 try { state = JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch { bail('no hay datos todavía (¿está instalado y en marcha Sinapsis?). Explora el proyecto como siempre.'); }
-const p = findProject(state, dir);
-if (!p) bail(`no conozco ${dir}: aún no hay historial de Claude Code en esta carpeta. Explora como siempre.`);
-if (!p.turns) bail('la caché es de una versión anterior: reinicia Sinapsis para que aprenda el mapa.');
+// el atlas reparte lo hecho desde carpetas paraguas (p. ej. ~/Proyectos) en el proyecto real de cada fichero
+const sc = scope(buildAtlas(state, { home: os.homedir() }), dir);
+if (!sc) bail(`no conozco ${dir}: aún no hay historial de Claude Code en esta carpeta. Explora como siempre.`);
+const p = sc.project;
 
 // Si estás en una subcarpeta del proyecto, solo cuenta lo de esa subcarpeta y las rutas salen relativas a ella
-const sub = p.cwd && dir !== p.cwd && dir.startsWith(p.cwd + '/') ? dir.slice(p.cwd.length + 1) + '/' : '';
+const sub = sc.sub ? sc.sub + '/' : '';
 const scoped = sub ? {
   ...p,
   files: Object.fromEntries(Object.entries(p.files || {}).filter(([f]) => f.startsWith(sub)).map(([f, v]) => [f.slice(sub.length), v])),
-  // órdenes de esa subcarpeta (se apuntan como «subcarpeta\torden»)
   cmds: Object.fromEntries(Object.entries(p.cmds || {}).flatMap(([k, n]) => {
     const [d, c] = k.includes('\t') ? k.split('\t') : ['', k];
     if (d === sub.slice(0, -1)) return [[c, n]];
@@ -47,7 +48,7 @@ const scoped = sub ? {
   })),
   turns: (p.turns || []).map((t) => ({ ...t, f: Object.fromEntries(Object.entries(t.f || {}).filter(([f]) => f.startsWith(sub)).map(([f, v]) => [f.slice(sub.length), v])) })).filter((t) => Object.keys(t.f).length),
 } : p;
-const name = sub ? `${p.name}/${sub.slice(0, -1)}` : p.name;
+const name = sub ? `${p.name}/${sub.slice(0, -1)}` : sc.mode === 'all' ? `${p.name} (todos sus proyectos)` : p.name;
 const day = (ts) => new Date(ts).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
 const stars = (s) => (s > 0.66 ? '★★★' : s > 0.33 ? '★★ ' : '★  ');
 const nf = (n) => (Math.round(n * 10) / 10).toLocaleString('es-ES');
@@ -84,5 +85,6 @@ if (r.similar.length) {
   console.log('\nPeticiones parecidas:');
   for (const t of r.similar) console.log(`  · ${day(t.ts)} «${t.text}»${t.files.length ? ' → ' + t.files.join(', ') : ''}`);
 }
-if (r.cmds.length) console.log(`\nCómo se ejecuta: ${r.cmds.slice(0, 5).map(([c]) => c).join(' · ')}`);
+const cmds = sc.mode === 'all' ? cmdsFor(r.cmds, r.files) : r.cmds;
+if (cmds.length) console.log(`\nCómo se ejecuta: ${cmds.slice(0, 5).map(([c]) => c).join(' · ')}`);
 console.log('\nEs una pista aprendida del historial: confirma leyendo, y lee solo las partes que necesites.');

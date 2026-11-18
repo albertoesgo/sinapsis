@@ -9,7 +9,9 @@ const STOP = new Set(('de la que el en y a los se del las un por con no una su p
   'nada muchos cual poco ella estar estas algunas algo nosotros mis tu te ti tus ellas puedes puede hacer haz hazlo ' +
   'quiero quieres creo ahora bien mejor tambien pues vale dime dame mira mirar ver favor gracias the and for with that ' +
   'this from into you your are was can will have has not but all any its our use make please just also need want que ' +
-  'cosa cosas algo esto eso aqui alli asi tal vez solo sea ser son fue han hemos tiene tienen').split(' '));
+  'cosa cosas algo esto eso aqui alli asi tal vez solo sea ser son fue han hemos tiene tienen ' +
+  'https http www com html sigue seguir hecho hace implementa implementalo cambia cambios parte sale salen queda quedan ' +
+  'pon quita anade nose soy estoy esta estan sigo ok genial perfecto revisa revisalo prueba ahi').split(' '));
 
 /** Palabras con significado de un texto (sin acentos, en minúsculas, sin palabras vacías), sin repetir. */
 export function tokenize(text, max = 24) {
@@ -69,7 +71,7 @@ export function where(p, query, { now = Date.now(), limit = 8 } = {}) {
   const q = tokenize(query);
   const qs = [...new Set(q.map(stem))];
   const turns = p.turns || [];
-  if (!q.length) return { query: q, files: [], similar: [], cmds: projectMap(p, { now }).cmds };
+  if (!q.length) return { query: q, files: [], similar: [], cmds: projectMap(p, { now }).cmds, conf: 0, nameHit: 0 };
   const df = new Map();
   const tstems = turns.map((t) => new Set(t.q.map(stem)));
   for (const set of tstems) for (const w of set) df.set(w, (df.get(w) || 0) + 1);
@@ -82,18 +84,29 @@ export function where(p, query, { now = Date.now(), limit = 8 } = {}) {
     if (!shared.length) return;
     const sim = shared.reduce((a, w) => a + idf(w), 0) / Math.sqrt(t.q.length + 3);
     const age = Math.exp(-(now - t.ts) / (60 * 86400e3));
-    similar.push({ sim: sim * (0.5 + 0.5 * age), text: t.t, ts: t.ts, files: Object.keys(t.f || {}) });
-    for (const [f, w] of Object.entries(t.f || {})) {
-      score.set(f, (score.get(f) || 0) + sim * w * (0.5 + 0.5 * age));
-      if (!why.has(f)) why.set(f, t.t);
-    }
+    similar.push({ sim: sim * (0.5 + 0.5 * age), raw: sim, t });
   });
+  // solo cuentan las peticiones de verdad parecidas (cerca de la mejor); cada una reparte su parecido
+  // entre sus ficheros según lo que pesaron en ella (editar > leer), sin que un fichero tocado cien
+  // veces en tareas sin relación tape al de la tarea gemela
+  const best = Math.max(0, ...similar.map((x) => x.sim));
+  for (const { sim, t } of similar) {
+    if (sim < best * 0.3) continue;
+    const ws = Object.entries(t.f || {});
+    const wmax = Math.max(1e-9, ...ws.map(([, w]) => w));
+    for (const [f, w] of ws) {
+      score.set(f, (score.get(f) || 0) + sim * sim * Math.sqrt(w / wmax));
+      if (!why.has(f) || sim >= best) why.set(f, t.t);
+    }
+  }
   // lo aprendido de peticiones parecidas, normalizado; luego, el nombre del fichero (pesa mucho)
   const files = p.files || {};
+  let nameHit = 0;
   const tmax = Math.max(1e-9, ...score.values());
   for (const [k, v] of score) score.set(k, v / tmax);
   for (const [rel, f] of Object.entries(files)) {
     const hits = pathWords(rel).filter((w) => q.some((x) => x === w || stem(x) === stem(w) || (w.length >= 3 && x.startsWith(w)) || (x.length > 4 && w.startsWith(x))));
+    if (hits.length) nameHit = Math.max(nameHit, hits.length);
     if (hits.length) score.set(rel, (score.get(rel) || 0) + Math.min(1.2, hits.length * 0.7) + 0.03 * Math.log1p(f.r + f.e));
   }
   const max = Math.max(1e-9, ...score.values());
@@ -104,7 +117,10 @@ export function where(p, query, { now = Date.now(), limit = 8 } = {}) {
   return {
     query: q,
     files: ranked,
-    similar: similar.sort((a, b) => b.sim - a.sim).slice(0, 4).map(({ text, ts, files: f }) => ({ text, ts, files: f.slice(0, 4) })),
+    similar: similar.sort((a, b) => b.sim - a.sim).slice(0, 4).map(({ raw, t }) => ({ text: t.t, ts: t.ts, files: Object.entries(t.f || {}).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([f]) => f), sim: raw, k: t.k || [] })),
     cmds: projectMap(p, { now }).cmds,
+    // confianza: parecido de la mejor petición pasada (0 = nada en común) y palabras de la tarea en nombres de fichero
+    conf: Math.max(0, ...similar.map((x) => x.raw)),
+    nameHit,
   };
 }

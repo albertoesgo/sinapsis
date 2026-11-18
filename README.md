@@ -40,7 +40,11 @@ Es una correspondencia con la anatomía real, pero no una medición del cerebro:
 
 Y en los paneles:
 
-- **Tu plan**: cuánto llevas de la ventana de 5 horas y del límite semanal de tu suscripción (Pro o Max), cuándo se reinicia cada uno y si, al ritmo actual, vas a llegar al límite antes. Claude Code deja escrito en el historial cada corte («You've hit your 5-hour limit · resets 10:50pm»). Sinapsis mide lo que habías consumido justo antes de cada corte y lo usa como tu presupuesto. Es una estimación: si también usas Claude en la web o en el móvil, eso cuenta y aquí no se ve. Avisa al pasar del 75 % y del 90 %.
+- **Tu plan**: cuánto llevas de la ventana de 5 horas y del límite semanal de tu suscripción (Pro o Max), cuándo se reinicia cada uno y si, al ritmo actual, vas a llegar al límite antes. Avisa al pasar del 75 % y del 90 %. Usa, por orden de preferencia:
+  1. **El dato real de Anthropic.** Claude Code le pasa a su línea de estado tus porcentajes reales en cada respuesta; la de Sinapsis (`npm run hooks:install`) los guarda y el plan parte de ahí, sumando lo que gastas después. Sin claves ni red.
+  2. **Tu corrección.** Si usas Claude Code desde el móvil o la app (sin terminal, la línea de estado no se ejecuta), escribe el % que ves en *Ajustes → Uso* y Sinapsis recalibra el presupuesto.
+  3. **Una estimación** con los cortes reales que Claude Code deja en el historial («You've hit your 5-hour limit · resets 10:50pm»): lo consumido justo antes de cada corte es tu presupuesto. No ve lo que gastas en la web o el móvil, así que puede quedarse corta.
+  4. Opcional (`"usoReal": true` en `~/.sinapsis/config.json`): Sinapsis pregunta a Anthropic cada 5 minutos con la sesión que Claude Code guarda en el llavero de macOS, igual que `/usage`. Desactivado por defecto: es la única opción que sale a internet.
 - **Ahora mismo**: lo único que conviene mirar, con un clic para ir a ello. Por ejemplo, la sesión que relee demasiado contexto o lo cerca que estás del límite.
 - **Búsqueda (⌘K)**: salta a cualquier proyecto, sesión, skill, herramienta o acción.
 - **Detalle de cada neurona**: cifras clave, gráfica de 30 días y el comando listo para copiar que retoma una sesión (`claude --resume …`) o abre el proyecto en la terminal.
@@ -60,24 +64,33 @@ Atajos: <kbd>⌘K</kbd> o <kbd>/</kbd> buscar, <kbd>R</kbd> informe, <kbd>I</kbd
 
 ![Búsqueda con ⌘K](docs/busqueda.png)
 
-## Mapa de proyectos: dónde mirar (y vault de Obsidian)
+## Memoria común: un solo mapa de tus proyectos, que Claude usa solo
 
-Lo que más tokens gasta en Claude Code no es lo que escribe, sino **buscar**: Glob, Grep y abrir ficheros enteros hasta dar con el sitio, y cada paso relee todo el contexto. Sinapsis aprende de tu historial real qué ficheros se leen y editan en cada petición, con qué órdenes se prueba cada proyecto y cuántos pasos se dedican a buscar antes de tocar nada. Con eso:
+Lo que más tokens gasta en Claude Code no es lo que escribe, sino **buscar**: Glob, Grep y abrir ficheros enteros hasta dar con el sitio, y cada paso relee todo el contexto. Sinapsis aprende de tu historial real qué ficheros se leen y editan en cada petición, con qué órdenes se prueba cada proyecto, qué skills sirvieron y cuántos pasos se dedicaron a buscar antes de tocar nada.
 
-- **En la ficha de cada proyecto**, «Dónde mirar» muestra sus ficheros clave y un buscador: escribes la tarea y te dice por qué ficheros empezar, a partir de las peticiones parecidas que ya hiciste.
+**El atlas** (`server/atlas.js`) junta todo eso en un solo mapa. Si abres Claude en una carpeta que contiene varios proyectos (p. ej. `~/Proyectos`), cada fichero, orden y tarea vuelve a su proyecto real por su ruta: son las regiones del cerebro. Las conexiones entre regiones salen de lo que comparten de verdad: tareas que tocaron las dos, skills usadas en ambas y el mismo tipo de ficheros. Con el atlas, Claude recibe contexto sin pedirlo (`npm run hooks:install`):
+
+- **Al abrir, reanudar o compactar una sesión** (hook `SessionStart`), un resumen de dónde está cada cosa: ficheros clave, temas, cómo se prueba y con qué se conecta cada proyecto. Unos 250 tokens, para no empezar de cero ni explorar a ciegas tras compactar.
+- **Al escribir una tarea** (hook `UserPromptSubmit`), por qué ficheros empezar, la tarea parecida de la que sale la pista, la skill que se usó entonces y, si en otro proyecto resolviste algo parecido, dónde. **Solo cuando hay una pista clara**: si no, no añade nada y no gasta.
+
+**¿Acierta? Se mide.** Sinapsis repite tu historial a ciegas: para cada tarea que acabó editando, busca con lo que se sabía antes y mira si el fichero editado estaba entre las 3 primeras pistas. En el historial con el que se desarrolló (127 tareas reales) acierta el **58 %**. Con el umbral de confianza da pista en el 35 % de las tareas y ahí acierta el 73 %, y cada acierto evita unos 4 pasos de búsqueda. Con los hooks puestos, la tarjeta **Memoria común** compara además en vivo las tareas con pista y sin ella: pasos de búsqueda, coste y acierto real.
+
+También a mano:
+
+- **En la ficha de cada proyecto**, «Dónde mirar»: sus ficheros clave y un buscador de por dónde empezar una tarea.
 - **Desde la terminal** (o desde Claude):
   ```bash
   node scripts/donde.mjs --dir ~/mi-proyecto "el botón de pagar no responde en el móvil"
   node scripts/donde.mjs --dir ~/mi-proyecto --mapa      # ficheros clave, órdenes y tareas recientes
   ```
-- **Skill para Claude Code** (`npm run skill:install`): antes de explorar un proyecto, Claude consulta el mapa y va directo a los ficheros. A diferencia de un conector MCP, que carga sus definiciones en cada paso de cada sesión, una skill solo ocupa su descripción (~60 tokens) hasta que se usa.
-- **Vault de Obsidian** en `~/.sinapsis/vault`, regenerado cada 10 minutos. Cada proyecto tiene una nota: zona del cerebro, dónde mirar (con las líneas de cada fichero), cómo se ejecuta, tareas recientes con sus ficheros, skills y conectores, y consejos concretos para gastar menos («`js/admin.js`, 852 líneas, se ha leído 25 veces: pide solo la parte que toca»). Las notas de proyectos, skills, conectores y zonas están enlazadas: la vista de grafo de Obsidian dibuja el mismo cerebro. Se puede desactivar con `"vault": false` en `~/.sinapsis/config.json` o cambiar de carpeta con `"vaultDir"`.
+- **Skill para Claude Code** (`npm run skill:install`), para que Claude consulte el mapa cuando lo necesite. Hooks y skill en vez de un conector MCP: un MCP carga sus definiciones en cada paso de cada sesión, y estos solo gastan cuando aportan.
+- **Vault de Obsidian** en `~/.sinapsis/vault`, regenerado cada 10 minutos: una nota por proyecto (también los que solo tocas desde la carpeta paraguas) con dónde mirar, las líneas de cada fichero, cómo se ejecuta, tareas recientes, temas y consejos para gastar menos («`js/admin.js`, 852 líneas, se ha leído 25 veces: pide solo la parte que toca»). Las notas de proyectos, skills, conectores y zonas están enlazadas por sus conexiones reales, y la vista de grafo dibuja el mismo cerebro. Obsidian es opcional: el vault es Markdown. Se desactiva con `"vault": false` en `~/.sinapsis/config.json`.
 
-Es una pista estadística (palabras en común con peticiones anteriores, ponderadas por su rareza, más el nombre de los ficheros), no una lectura del código: si no hay historial parecido, se explora como siempre.
+Es una pista estadística (palabras en común con peticiones anteriores, ponderadas por su rareza, más el nombre de los ficheros), no una lectura del código. Para quitar los hooks: `npm run hooks:remove`.
 
 ## Qué es real y qué no
 
-Todos los datos salen de los registros que Claude Code ya guarda en `~/.claude/projects/**/*.jsonl` (uso de tokens de cada respuesta, llamadas a herramientas, subagentes, títulos de sesión…) y de lo que tienes instalado en `~/.claude/skills`, los plugins y las carpetas de memoria. **Nada sale de tu ordenador**: por defecto el servidor solo escucha en `127.0.0.1`, nunca hace peticiones a internet y, si activas el acceso desde el móvil, solo responde en tu red local y con clave.
+Todos los datos salen de los registros que Claude Code ya guarda en `~/.claude/projects/**/*.jsonl` (uso de tokens de cada respuesta, llamadas a herramientas, subagentes, títulos de sesión…) y de lo que tienes instalado en `~/.claude/skills`, los plugins y las carpetas de memoria. **Nada sale de tu ordenador**: por defecto el servidor solo escucha en `127.0.0.1`, no hace peticiones a internet (salvo la consulta opcional del uso real, desactivada por defecto) y, si activas el acceso desde el móvil, solo responde en tu red local y con clave.
 
 - Las neuronas y sus conexiones existen solo si el evento ocurrió de verdad. Su tamaño y su brillo dependen del uso real.
 - Las chispas doradas que salen de un modelo al pensar representan sus *tokens de razonamiento* reales (una chispa por cada ~120).
@@ -159,15 +172,17 @@ flowchart LR
 - **Lectura incremental.** Cada fichero se lee desde el último byte procesado, así que un historial de cientos de MB se actualiza en milisegundos. La caché en disco evita releerlo al arrancar. Los mensajes se deduplican por id, porque Claude Code escribe una línea por cada bloque de una misma respuesta.
 - **Tiempo real con SSE.** Cada evento nuevo llega al navegador por *Server-Sent Events*. Las instantáneas van comprimidas con gzip, y tras la primera se piden sin el historial de 24 h: de ~600 KB a ~12 KB.
 - **Cerebro procedural.** Unas 110.000 partículas con ruido de Perlin forman hemisferios, surcos, cerebelo y tronco. Las ondas de activación se calculan en el *vertex shader*, el resplandor con *bloom* y los impulsos son curvas de Bézier con estela. Si el dispositivo no llega a 40 fps, la resolución baja sola.
-- **Límites del plan aprendidos de los datos.** Anthropic no publica el tamaño de los límites. Sinapsis lee los cortes reales del historial («You've hit your 5-hour limit · resets …») y mide lo consumido justo antes, en franjas de 10 minutos.
+- **Límites del plan con datos reales.** El porcentaje real llega por la línea de estado de Claude Code o por tu corrección; entre lecturas, se suma lo consumido en franjas de 10 minutos al presupuesto que implica la última lectura. Sin lecturas, el presupuesto se aprende de los cortes reales del historial.
+- **Contexto que se gana su sitio.** Las pistas para Claude solo se dan por encima de un umbral de confianza calibrado repitiendo el historial a ciegas, y se miden en vivo (con pista frente a sin pista) en lugar de suponer que ahorran.
 - **Seguridad.** Solo escucha en `127.0.0.1`. Con `--lan` exige una clave aleatoria (cookie `HttpOnly`). Los nombres de host se validan contra el *DNS rebinding*, y todo el texto se escapa antes de pintarlo.
 - **PWA completa.** Se instala como app (iconos *maskable*, capturas y accesos directos a Informe, Plan, Buscar e Impulsos) y abre sin conexión con un *service worker* versionado. Cuando hay una versión nueva, avisa y se actualiza con una sola recarga. «Atrás» (botón, gesto de Android o Esc) cierra solo la pantalla de arriba y vuelve a la anterior, sin salir de la app.
 - **Responsive y táctil.** Paneles en escritorio; hojas inferiores con gestos (deslizar para cerrar o ampliar, doble toque para centrar) en móvil y tableta; hojas laterales con el móvil en horizontal; alturas en `dvh` para que Safari no corte nada.
-- **Pruebas e integración continua.** `npm run lint` (ESLint) y `npm test` (con `node:test`, sin dependencias). Las pruebas cubren precios, lectura de registros, cortes del plan y el informe. GitHub Actions las ejecuta en Node 20, 22 y 24 y publica la demo en GitHub Pages.
+- **Pruebas e integración continua.** `npm run lint` (ESLint) y `npm test` (con `node:test`, sin dependencias). Las pruebas cubren precios, lectura de registros, cortes y lecturas reales del plan, el informe, el mapa y el atlas. GitHub Actions las ejecuta en Node 20, 22 y 24 y publica la demo en GitHub Pages.
 
 ### Ficheros
 
-- `server/where.js` aprende el mapa de cada proyecto y responde «dónde mirar» (TF-IDF sobre peticiones pasadas). `server/vault.js` genera el vault de Obsidian y `scripts/donde.mjs` lo lleva a la terminal.
+- `server/where.js` responde «dónde mirar» (TF-IDF sobre peticiones pasadas). `server/atlas.js` une todos los proyectos en un mapa con regiones y conexiones, genera el contexto de los hooks (`scripts/hook.mjs`) y mide el acierto. `server/vault.js` genera el vault de Obsidian y `scripts/donde.mjs` lo lleva a la terminal.
+- `server/usage.js` guarda las lecturas reales del plan (de `scripts/statusline.mjs`, de tu corrección o de la consulta opcional) y `server/plan.js` las combina con la estimación.
 - `server/plan.js` reconstruye las ventanas de 5 horas y la semana a partir del consumo en franjas de 10 minutos y de los cortes reales.
 - `server/ingest.js` lee los `.jsonl` de forma incremental (por desplazamiento de bytes), descarta duplicados por id de mensaje y agrega el uso de tokens, el coste, las herramientas, las skills, los subagentes, los conectores y la memoria. Envía cada evento al navegador por *Server-Sent Events*.
 - `server/inventory.js` hace inventario de lo instalado, se use o no.

@@ -10,6 +10,7 @@ import { reportMethods } from './hud/report.js';
 import { feedMethods } from './hud/feed.js';
 import { paletteMethods } from './hud/palette.js';
 import { detailMethods } from './hud/detail.js';
+import { atlasMethods } from './hud/atlas.js';
 
 export { tok, ago } from './hud/format.js';
 
@@ -161,6 +162,8 @@ export class Hud {
 
     // el plan y las cuentas atrás se refrescan solos
     setInterval(() => { if (this.snap) { this.renderPlan(); this.renderNow(); } }, 30000);
+    this.loadAtlas();
+    setInterval(() => this.loadAtlas(), 5 * 60e3);
   }
 
   onKey(e) {
@@ -372,4 +375,4 @@ export class Hud {
   }
 }
 
-Object.assign(Hud.prototype, planMethods, panelsMethods, reportMethods, feedMethods, paletteMethods, detailMethods);
+Object.assign(Hud.prototype, planMethods, panelsMethods, reportMethods, feedMethods, paletteMethods, detailMethods, atlasMethods);

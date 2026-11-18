@@ -39,7 +39,43 @@ function windows5h(slots, since, hits) {
   return out;
 }
 
-export function planStatus(state, now = Date.now()) {
+/**
+ * Corrige la estimación con lecturas reales del porcentaje que da Anthropic (la línea de estado de
+ * Claude Code, lo que tú mismos escribes al calibrar o, si lo activas, la consulta directa).
+ * Con una lectura de esta ventana: % real de entonces + lo consumido después, al presupuesto que
+ * implica esa lectura (lo visto en local ÷ % real: incluye lo que gastas en la web o el móvil).
+ * Con lecturas de ventanas pasadas: aprende el presupuesto real (mediana).
+ */
+export function applyReadings(plan, readings, slots, now = Date.now()) {
+  if (!readings?.length) return plan;
+  const fix = (key, span) => {
+    const w = plan[key];
+    const all = readings.filter((r) => r[key] && r[key].pct != null && r[key].reset).sort((a, b) => a.ts - b.ts);
+    // presupuestos implícitos en lecturas con señal suficiente (≥ 10 %)
+    const implied = all.filter((r) => r[key].pct >= 10 && r.ts <= now).map((r) => sumSlots(slots, r[key].reset - span, r.ts + 1) / (r[key].pct / 100)).filter((b) => b > 0);
+    const learned = median(implied.slice(-6));
+    const cur = [...all].reverse().find((r) => r[key].reset > now && r.ts > r[key].reset - span && r.ts <= now);
+    if (!cur) {
+      if (learned) { w.budget = learned; w.pct = w.used / learned; w.learned = implied.length; }
+      return;
+    }
+    const end = cur[key].reset, start = end - span;
+    const pct0 = cur[key].pct / 100;
+    const before = sumSlots(slots, start, cur.ts + 1);
+    const after = sumSlots(slots, cur.ts + 1, now + 1);
+    const budget = pct0 >= 0.05 && before > 0 ? before / pct0 : learned || w.budget || null;
+    const pct = pct0 + (budget ? after / budget : 0);
+    Object.assign(w, { start, end, budget: budget || 1, used: pct * (budget || 1), pct, anchored: true, real: { ts: cur.ts, src: cur.src, pct: pct0 } });
+    delete w.eta;
+    const rate = key === 'h5' ? plan.rate / 3600e3 : sumSlots(slots, now - 3 * 86400e3, now + 1) / (3 * 86400e3);
+    if (budget && rate > 0) { const eta = now + Math.max(0, budget - w.used) / rate; if (eta < end) w.eta = eta; }
+  };
+  fix('h5', H5);
+  fix('week', WEEK);
+  return plan;
+}
+
+export function planStatus(state, now = Date.now(), readings = []) {
   const slots = state.slots || {};
   const hits = Object.values(state.limits || {}).sort((a, b) => a.ts - b.ts);
   const oldest = Math.min(now, ...Object.keys(slots).map((k) => k * SLOT));
@@ -93,11 +129,11 @@ export function planStatus(state, now = Date.now()) {
     if (eta < wEnd) week.eta = eta;
   }
 
-  return {
+  return applyReadings({
     h5,
     week,
     rate: rate * 3600e3, // por hora
     hits: hits.slice(-10).map(({ kind, label, ts, resetTs, used }) => ({ kind, label, ts, resetTs, used: used ?? null })),
     windows: wins.slice(-12).map(({ start, end, used }) => ({ start, end, used, hit: hits.some((h) => h.kind === '5h' && h.ts >= start && h.ts < end) })),
-  };
+  }, readings, slots, now);
 }

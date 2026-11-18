@@ -180,3 +180,92 @@ test('where: peticiones parecidas y nombres de fichero llevan al sitio correcto'
   assert.equal(where(p, 'cambiar el theme').files[0].rel, 'src/styles/theme.css'); // por el nombre del fichero
   assert.equal(where(p, 'xyz').files.length, 0);
 });
+
+// ---------- atlas: un solo mapa para todos los proyectos ----------
+import { buildAtlas, brief, hint, evaluate, scope } from '../server/atlas.js';
+import { applyReadings } from '../server/plan.js';
+import { fromStatusLine, fromUsageApi, manualReading } from '../server/usage.js';
+
+function umbrellaState(now) {
+  const T = (d, text, f, extra = {}) => ({ ts: now - d * 86400e3, s: 's', t: text, q: tokenize(text), f, x: 3, n: 6, e: true, ...extra });
+  return {
+    projects: {
+      paraguas: {
+        key: 'paraguas', name: 'Proyectos', cwd: '/u/Proyectos',
+        files: { 'tienda/src/cart.js': { r: 4, e: 3, last: now }, 'blog/posts/hola.md': { r: 1, e: 1, last: now } },
+        cmds: { 'tienda\tnpm test': 2 },
+        turns: [
+          T(5, 'el carrito suma mal los descuentos', { 'tienda/src/cart.js': 4 }, { k: ['revisar'] }),
+          T(4, 'nuevo post sobre el viaje', { 'blog/posts/hola.md': 3 }),
+          T(3, 'el carrito y el post comparten estilo', { 'tienda/src/cart.js': 1, 'blog/posts/hola.md': 1 }),
+        ],
+      },
+      tienda: { key: 'tienda', name: 'tienda', cwd: '/u/Proyectos/tienda', files: { 'src/login.js': { r: 2, e: 2, last: now } }, cmds: {}, turns: [T(2, 'arregla el login con google', { 'src/login.js': 4 })] },
+      otro: { key: 'otro', name: 'otro', cwd: '/u/Proyectos/otro', files: {}, cmds: {}, turns: [] },
+    },
+  };
+}
+
+test('atlas: lo hecho desde la carpeta paraguas vuelve a su proyecto real', () => {
+  const now = Date.now();
+  const A = buildAtlas(umbrellaState(now), { home: '/u', now });
+  const tienda = A.regions.get('/u/Proyectos/tienda');
+  assert.ok(tienda.files['src/cart.js'] && tienda.files['src/login.js']); // de la sesión paraguas y de la propia
+  assert.equal(tienda.cmds['npm test'], 2);
+  assert.equal(tienda.turns.length, 3);
+  assert.ok(A.regions.get('/u/Proyectos/blog')); // subcarpeta sin sesiones propias: también es un proyecto
+  assert.ok(A.connections.some((c) => c.why[0].includes('tocaron las dos')));
+  assert.equal(scope(A, '/u/Proyectos').mode, 'all');
+  assert.equal(scope(A, '/u/Proyectos/tienda/src').sub, 'src');
+});
+
+test('atlas: pista solo si hay algo claro, y brief corto', () => {
+  const now = Date.now();
+  const A = buildAtlas(umbrellaState(now), { home: '/u', now });
+  const h = hint(A, '/u/Proyectos/tienda', 'los descuentos del carrito están mal', { now });
+  assert.ok(h && h.files[0] === 'src/cart.js');
+  assert.match(h.text, /revisar/); // la skill que sirvió en la tarea parecida
+  assert.equal(hint(A, '/u/Proyectos/tienda', 'qué tiempo hace', { now }), null);
+  assert.equal(hint(A, '/u/Proyectos/tienda', '/compact', { now }), null);
+  const all = hint(A, '/u/Proyectos', 'los descuentos del carrito', { now });
+  assert.equal(all.files[0], 'tienda/src/cart.js');
+  const b = brief(A, '/u/Proyectos', { now });
+  assert.match(b, /tienda\//);
+  assert.ok(b.length < 1500);
+  const ev = evaluate(A);
+  assert.ok(ev.tasks >= 1 && ev.hitRate >= 0 && ev.hitRate <= 1);
+});
+
+test('plan: una lectura real manda sobre la estimación', () => {
+  const SLOT = 600e3;
+  const now = Date.now();
+  const slots = {};
+  const start = Math.floor((now - 2 * 86400e3) / SLOT);
+  for (let k = start; k <= Math.floor(now / SLOT); k++) slots[k] = 0.1; // consumo constante
+  const reset = now + 2 * 86400e3;
+  const readTs = now - 3600e3;
+  const plan = { h5: { used: 0, budget: 45 }, week: { used: 0, budget: 290 }, rate: 0.6 };
+  applyReadings(plan, [{ ts: readTs, src: 'claude-code', week: { pct: 50, reset } }], slots, now);
+  assert.equal(plan.week.real.pct, 0.5);
+  assert.equal(plan.week.end, reset);
+  // el presupuesto sale de la lectura (lo visto en local ÷ 50 %) y después se suma lo gastado
+  assert.ok(plan.week.pct > 0.5 && plan.week.pct < 0.6, String(plan.week.pct));
+  const sl = fromStatusLine({ five_hour: { used_percentage: 6, resets_at: 1795050600 }, seven_day: { used_percentage: 77, resets_at: 1795132800 } }, 1);
+  assert.deepEqual(sl.week, { pct: 77, reset: 1795132800000 });
+  const api = fromUsageApi({ five_hour: { utilization: 12, resets_at: '2026-11-19T01:10:00Z' } }, 1);
+  assert.equal(api.h5.pct, 12);
+  assert.equal(api.week, null);
+  assert.equal(manualReading({ week: '77,5' }, { week: { end: 5 } }).week.pct, 77.5);
+});
+
+test('ingest: la terminal recuerda el cd entre órdenes', () => {
+  const b = newBrain();
+  const t = Date.now() - 60e3;
+  const tool = (id, command, s) => b.processRecord(assistant(id, t + s * 1000, { output_tokens: 1 }, [{ type: 'tool_use', id: 'tu_' + id, name: 'Bash', input: { command } }]), { ...ctx });
+  b.processRecord({ type: 'user', timestamp: new Date(t).toISOString(), sessionId: 'ses-1', cwd: '/tmp/proj', message: { content: 'prueba la web' } }, ctx);
+  tool('a', 'cd web && ls', 1);
+  tool('b', 'npm run build', 2);
+  assert.equal(b.s.projects.proj.cmds['web\tnpm run build'], 1);
+  assert.equal(normCmd('npm install three'), null);
+  assert.equal(normCmd('.venv/bin/python /tmp/x.py'), null);
+});

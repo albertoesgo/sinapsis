@@ -8,7 +8,7 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 
 export const CONFIG_FILE = path.join(os.homedir(), '.sinapsis', 'config.json');
-const DEFAULTS = { macNotify: true, ntfy: null, ntfyServer: 'https://ntfy.sh', weeklyReport: true, weeklyDay: 1, weeklyHour: 9, vault: true, vaultDir: null };
+const DEFAULTS = { macNotify: true, ntfy: null, ntfyServer: 'https://ntfy.sh', weeklyReport: true, weeklyDay: 1, weeklyHour: 9, vault: true, vaultDir: null, usoReal: false };
 
 export function loadConfig() {
   try { return { ...DEFAULTS, ...JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) }; } catch { return { ...DEFAULTS }; }
