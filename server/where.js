@@ -11,7 +11,7 @@ const STOP = new Set(('de la que el en y a los se del las un por con no una su p
   'this from into you your are was can will have has not but all any its our use make please just also need want que ' +
   'cosa cosas algo esto eso aqui alli asi tal vez solo sea ser son fue han hemos tiene tienen ' +
   'https http www com html sigue seguir hecho hace implementa implementalo cambia cambios parte sale salen queda quedan ' +
-  'pon quita anade nose soy estoy esta estan sigo ok genial perfecto revisa revisalo prueba ahi').split(' '));
+  'pon quita anade nose soy estoy esta estan sigo ok genial perfecto revisa revisalo prueba ahi vaya mola').split(' '));
 
 /** Palabras con significado de un texto (sin acentos, en minúsculas, sin palabras vacías), sin repetir. */
 export function tokenize(text, max = 24) {

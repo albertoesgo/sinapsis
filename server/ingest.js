@@ -11,6 +11,8 @@ import { tokenize, projectMap } from './where.js';
 const CACHE_VERSION = 10;
 const TURNS_MAX = 400;   // peticiones recordadas por proyecto para el mapa «dónde mirar»
 const FILES_MAX = 600;
+// carpetas generadas o de dependencias: no son «dónde mirar»
+export const JUNK_DIR = /(^|\/)(node_modules|\.git|dist|build|out|coverage|\.cache|\.next|\.nuxt|\.venv|venv|__pycache__|\.turbo|\.vercel|\.wrangler)\//;
 const SLOT_MS = 10 * 60e3; // consumo en franjas de 10 min, para las ventanas del plan
 const SLOT_KEEP_MS = 45 * 86400e3;
 
@@ -652,7 +654,7 @@ export class Brain {
   relPath(p, fp) {
     if (!fp || !p.cwd || !fp.startsWith(p.cwd + '/')) return null;
     const rel = fp.slice(p.cwd.length + 1);
-    return /(^|\/)(node_modules|\.git|dist|build)\//.test(rel) ? null : rel;
+    return JUNK_DIR.test(rel) ? null : rel;
   }
 
   onUser(d, p, s, base, agentId) {

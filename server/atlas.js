@@ -17,6 +17,7 @@ import { tokenize, stem, where, projectMap } from './where.js';
 const dirname = (p) => p.slice(0, p.lastIndexOf('/')) || '/';
 const basename = (p) => p.slice(p.lastIndexOf('/') + 1);
 const inside = (abs, root) => abs === root || abs.startsWith(root + '/');
+const JUNK_DIR = /(^|\/)(node_modules|\.git|dist|build|out|coverage|\.cache|\.next|\.nuxt|\.venv|venv|__pycache__|\.turbo|\.vercel|\.wrangler)\//; // como en ingest.js
 const EDIT_W = 2; // en una petición, peso ≥ 2 = el fichero se editó (Edit 3, sed -i / > 2)
 
 /** Umbral de confianza para dar una pista sin que la pidan (calibrado con evaluate() sobre tu historial). */
@@ -62,6 +63,7 @@ export function buildAtlas(state, { home = '', now = Date.now() } = {}) {
 
   for (const p of ps) {
     for (const [rel, f] of Object.entries(p.files || {})) {
+      if (JUNK_DIR.test(rel)) continue;
       const abs = p.cwd + '/' + rel;
       const root = rootOf(abs);
       if (!root) continue;
@@ -85,6 +87,7 @@ export function buildAtlas(state, { home = '', now = Date.now() } = {}) {
     for (const t of p.turns || []) {
       const by = new Map();
       for (const [rel, w] of Object.entries(t.f || {})) {
+        if (JUNK_DIR.test(rel)) continue;
         const abs = p.cwd + '/' + rel;
         const root = rootOf(abs);
         if (!root) continue;

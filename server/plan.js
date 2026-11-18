@@ -14,6 +14,11 @@ function sumSlots(slots, from, to) {
   for (let k = Math.floor(from / SLOT); k <= Math.floor((to - 1) / SLOT); k++) t += slots[k] || 0;
   return t;
 }
+/** Consumo desde `from` hasta el instante `ts`, repartiendo a prorrata la franja en la que cae `ts`. */
+function sumUntil(slots, from, ts) {
+  const k = Math.floor(ts / SLOT);
+  return sumSlots(slots, from, k * SLOT) + (slots[k] || 0) * ((ts - k * SLOT) / SLOT);
+}
 const median = (a) => {
   if (!a.length) return null;
   const s = [...a].sort((x, y) => x - y);
@@ -52,7 +57,7 @@ export function applyReadings(plan, readings, slots, now = Date.now()) {
     const w = plan[key];
     const all = readings.filter((r) => r[key] && r[key].pct != null && r[key].reset).sort((a, b) => a.ts - b.ts);
     // presupuestos implícitos en lecturas con señal suficiente (≥ 10 %)
-    const implied = all.filter((r) => r[key].pct >= 10 && r.ts <= now).map((r) => sumSlots(slots, r[key].reset - span, r.ts + 1) / (r[key].pct / 100)).filter((b) => b > 0);
+    const implied = all.filter((r) => r[key].pct >= 10 && r.ts <= now).map((r) => sumUntil(slots, r[key].reset - span, r.ts) / (r[key].pct / 100)).filter((b) => b > 0);
     const learned = median(implied.slice(-6));
     const cur = [...all].reverse().find((r) => r[key].reset > now && r.ts > r[key].reset - span && r.ts <= now);
     if (!cur) {
@@ -61,9 +66,11 @@ export function applyReadings(plan, readings, slots, now = Date.now()) {
     }
     const end = cur[key].reset, start = end - span;
     const pct0 = cur[key].pct / 100;
-    const before = sumSlots(slots, start, cur.ts + 1);
-    const after = sumSlots(slots, cur.ts + 1, now + 1);
-    const budget = pct0 >= 0.05 && before > 0 ? before / pct0 : learned || w.budget || null;
+    const before = sumUntil(slots, start, cur.ts);
+    const after = Math.max(0, sumSlots(slots, start, now + 1) - before);
+    // con lecturas bajas el redondeo del % pesa mucho: por debajo del 10 % manda el presupuesto aprendido
+    const fromReading = before > 0 && pct0 >= 0.03 ? before / pct0 : null;
+    const budget = pct0 >= 0.1 && fromReading ? fromReading : learned || w.budget || fromReading;
     const pct = pct0 + (budget ? after / budget : 0);
     Object.assign(w, { start, end, budget: budget || 1, used: pct * (budget || 1), pct, anchored: true, real: { ts: cur.ts, src: cur.src, pct: pct0 } });
     delete w.eta;

@@ -11,8 +11,9 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FILE = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
-const HOOK = `node "${path.join(ROOT, 'scripts', 'hook.mjs')}"`;
-const LINE = `node "${path.join(ROOT, 'scripts', 'statusline.mjs')}"`;
+const NODE = JSON.stringify(process.execPath);
+const HOOK = `${NODE} "${path.join(ROOT, 'scripts', 'hook.mjs')}"`;
+const LINE = `${NODE} "${path.join(ROOT, 'scripts', 'statusline.mjs')}"`;
 const ours = (h) => JSON.stringify(h).includes('sinapsis') && JSON.stringify(h).includes('hook.mjs');
 const remove = process.argv.includes('--remove');
 
